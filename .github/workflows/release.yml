@@ -10,10 +10,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
+      # 1. We need a Rust toolchain to use cargo commands
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # 2. This installs the binary so 'cargo run-script' works
+      - name: Install cargo-run-script
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-run-script
+
+      # 3. Now this will work as expected
       - name: Optimize Contract
-        run: make optimize
+        run: cargo run-script optimize
+
+      # 4. Fix permissions (The Docker optimizer often leaves files owned by root)
+      - name: Fix permissions
+        run: sudo chown -R $(id -u):$(id -g) artifacts/
 
       - name: Release Contract Files
         uses: softprops/action-gh-release@v1
