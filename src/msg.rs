@@ -2,7 +2,9 @@ use cosmwasm_schema::QueryResponses;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::state::Configuration;
+use cosmwasm_std::Addr;
+
+use crate::state::ContractAppMetadata;
 
 /// The msg that is sent to the chain in order to instantiate a new instance of this contract's
 /// stored code. Used in the functionality defined in [instantiate_contract](crate::instantiate::instantiate_contract::instantiate_contract).
@@ -10,12 +12,13 @@ use crate::state::Configuration;
 pub struct InstantiateContractMsg {
     /// The address of the OTC that will interact with the contract
     pub otc_address: String,
-    /// The address of the trust for the contract
-    pub trust_address: String,
     /// The denom of the loan dicer tokens to mint
     pub ldt_denom: String,
     /// The address that will be the admin of redemption markers created during redemption
     pub redemption_marker_admin: String,
+    /// Optional app-defined metadata for this contract instance; not interpreted semantically by the contract.
+    #[serde(default)]
+    pub app_metadata: Option<ContractAppMetadata>,
 }
 
 /// All defined payloads to be used when executing routes on this contract instance.
@@ -79,6 +82,16 @@ pub enum ExecuteMsg {
         /// The ID of the redemption to be canceled
         redemption_id: u64,
     },
+    /// Admin-only maintenance: delete specific marker denoms the contract holds in its bank balance
+    /// that no longer value-own any metadata scopes and are not referenced by any pending redemption
+    /// as `pool_denom`. Duplicate denoms are de-duplicated; processing order is ascending lexicographic
+    /// denom. The entire message fails if any denom is invalid.
+    CleanupOrphanMarkers {
+        /// Marker denoms to delete (must be non-empty). Each must be a marker the contract holds with
+        /// a positive balance, must not be the configured LDT denom, must not value-own any scope, and
+        /// must not be the `pool_denom` of any pending redemption.
+        marker_denoms: Vec<String>,
+    },
 }
 /// All defined payloads to be used when querying routes on this contract instance.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema, QueryResponses)]
@@ -100,8 +113,12 @@ pub enum QueryMsg {
     GetPendingRedemptionByReference { redemption_ref: String },
 
     /// A route to query the contract configuration details.
-    #[returns(Configuration)]
+    #[returns(crate::state::Configuration)]
     GetConfiguration {},
+
+    /// Contributor for a scope currently in the pool (set at contribution finalize; cleared after redemption finalize).
+    #[returns(GetContributorForScopeResponse)]
+    GetContributorForScope { scope_uuid: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
@@ -119,4 +136,11 @@ pub struct GetRedemptionResponse {
     pub pool_denom: String,
     pub pooling_complete: bool,
     pub redeemer_addr: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct GetContributorForScopeResponse {
+    pub scope_uuid: String,
+    /// None if never contributed, not in the pool, or already redeemed (attribution cleared on redemption).
+    pub contributor: Option<Addr>,
 }

@@ -66,10 +66,6 @@ pub enum ContractError {
     #[error("Invalid burn amount specified for redemption initiation")]
     InvalidBurnAmount,
 
-    /// Occurs when an invalid mint amount is specified for contribution initiation
-    #[error("Invalid mint amount specified for contribution initiation")]
-    InvalidMintAmount,
-
     /// Occurs when a scope UUID is not in the correct format
     #[error("Invalid scope UUID format: {0}")]
     InvalidScopeUuidFormat(String),
@@ -98,6 +94,10 @@ pub enum ContractError {
     #[error("Scope provided is already part of a pending contribution")]
     ScopeAlreadyInPendingContribution,
 
+    /// Occurs when finalizing a contribution for a scope that was already attributed to a contributor
+    #[error("Scope {scope_uuid} was already contributed and attributed")]
+    ScopeAlreadyContributed { scope_uuid: String },
+
     /// Occurs when a scope is provided for redemption but that scope is already part of a pending redemption
     #[error("Scope provided is already part of a pending redemption")]
     ScopeAlreadyInPendingRedemption,
@@ -105,6 +105,10 @@ pub enum ContractError {
     /// Occurs when a reference string provided is too long
     #[error("Reference string is too long, maximum length is 128 characters")]
     ReferenceTooLong,
+
+    /// Occurs when optional contract app metadata exceeds allowed length for `kind` or `data`
+    #[error("Contract app metadata field `{field}` exceeds maximum allowed length")]
+    ContractAppMetadataTooLong { field: &'static str },
 
     /// Occurs when a reference provided already exists in storage
     #[error("Reference {reference} already exists")]
@@ -114,7 +118,31 @@ pub enum ContractError {
     #[error("Unauthorized address attempted to finalize redemption")]
     UnauthorizedRedeemer,
 
+    /// Occurs when an action must be performed by the CosmWasm contract admin but is attempted by a different address (or the contract has no admin set)
+    #[error("Unauthorized action attempted by non-contract-admin address")]
+    UnauthorizedContractAdmin,
+
     /// Occurs when a scope provided by the OTC for redemption is not owned by the contract
     #[error("Unauthorized scope provided for redemption, contract does not own the scope")]
     UnauthorizedScopeForRedemption,
+
+    /// Occurs when orphan-marker cleanup is invoked with an empty denom list
+    #[error("Empty list of marker denoms is not allowed for orphan cleanup")]
+    EmptyOrphanMarkerDenoms,
+
+    /// Occurs when the contract does not hold a positive bank balance of the marker denom
+    #[error("Contract does not hold marker coins for denom: {denom}")]
+    OrphanMarkerNotHeldByContract { denom: String },
+
+    /// Occurs when the marker still value-owns at least one metadata scope
+    #[error("Marker {denom} still value-owns metadata scopes")]
+    OrphanMarkerStillOwnsScopes { denom: String },
+
+    /// Occurs when orphan cleanup targets the configured LDT denom
+    #[error("Cannot cleanup the LDT denom via orphan marker cleanup")]
+    CleanupLdtDenomNotAllowed,
+
+    /// Occurs when a pending redemption still references this marker as its pool denom
+    #[error("Cannot cleanup denom {denom}: pending redemption {redemption_id} uses it as pool_denom")]
+    OrphanMarkerReferencedByPendingRedemption { denom: String, redemption_id: u64 },
 }

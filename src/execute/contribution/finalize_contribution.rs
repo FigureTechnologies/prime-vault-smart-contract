@@ -1,7 +1,10 @@
 use crate::error::ContractError;
-use crate::state::{CONFIGURATION, CONTRIBUTION_REFERENCES, PENDING_CONTRIBUTIONS};
+use crate::state::{
+    CONFIGURATION, CONTRIBUTION_REFERENCES, MAX_CONTRACT_APP_METADATA_KIND_LEN,
+    PENDING_CONTRIBUTIONS, SCOPE_CONTRIBUTOR,
+};
 use crate::util::{get_all_owned_scopes, get_marker, get_single_denom_holder};
-use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
+use cosmwasm_std::{CosmosMsg, DepsMut, Env, MessageInfo, Response};
 use provwasm_std::types::cosmos::base::v1beta1::Coin;
 use provwasm_std::types::provenance::marker::v1::{
     MsgDeleteAccessRequest, MsgMintRequest, MsgTransferRequest, MsgWithdrawRequest,
@@ -37,9 +40,23 @@ pub fn execute_finalize_contribution(
         return Err(ContractError::InconsistentMarkerState);
     }
 
-    // Clear out the contribution details since this contribution is being finalized. We know which scopes
-    // are managed by the contract because the contract owns them, so there is no need to keep the contribution record
-    // which will prevent large amounts of storage from being used over time.
+    let contributor = info.sender.clone();
+    for uuid in &contribution.scope_uuids {
+        if SCOPE_CONTRIBUTOR
+            .may_load(deps.storage, uuid.clone())?
+            .is_some()
+        {
+            return Err(ContractError::ScopeAlreadyContributed {
+                scope_uuid: uuid.clone(),
+            });
+        }
+    }
+    for uuid in &contribution.scope_uuids {
+        SCOPE_CONTRIBUTOR.save(deps.storage, uuid.clone(), &contributor)?;
+    }
+
+    // Clear out the contribution details since this contribution is being finalized. Scope→contributor
+    // attribution is stored until the scope is redeemed (see finalize_redemption).
     PENDING_CONTRIBUTIONS.remove(deps.storage, contribution_id);
     if let Some(ref contribution_ref) = contribution.contribution_ref {
         CONTRIBUTION_REFERENCES.remove(deps.storage, contribution_ref.to_string());
@@ -48,27 +65,32 @@ pub fn execute_finalize_contribution(
     // Read the contract configuration to get the LDT denom
     let configuration = CONFIGURATION.load(deps.storage)?;
 
-    // Mint the number of LDT tokens specified in the contribution, which was authorized by the OTC
-    let msg_mint_ldt = MsgMintRequest {
-        administrator: env.contract.address.to_string(),
-        amount: Option::Some(Coin {
-            denom: configuration.ldt_denom.to_string(),
-            amount: contribution.mint_ldt_amount.to_string(),
-        }),
+    // Mint the number of LDT tokens specified in the contribution, which was authorized by the OTC.
+    // If the mint amount is 0, we can skip this step
+    let mint_msgs: Vec<CosmosMsg> = if contribution.mint_ldt_amount > 0 {
+        vec![
+            CosmosMsg::from(MsgMintRequest {
+                administrator: env.contract.address.to_string(),
+                amount: Option::Some(Coin {
+                    denom: configuration.ldt_denom.to_string(),
+                    amount: contribution.mint_ldt_amount.to_string(),
+                }),
+            }),
+            // Withdraw the minted LDT tokens to the marker holder (contributor)
+            CosmosMsg::from(MsgWithdrawRequest {
+                denom: configuration.ldt_denom.to_string(),
+                administrator: env.contract.address.to_string(),
+                to_address: balance.address.to_string(), // Withdraw to the marker holder (contributor)
+                amount: vec![Coin {
+                    denom: configuration.ldt_denom.to_string(),
+                    amount: contribution.mint_ldt_amount.to_string(),
+                }],
+            }),
+        ]
+    } else {
+        vec![]
     };
 
-    // Withdraw the minted LDT tokens to the marker holder (contributor)
-    let msg_withdraw_ldt = MsgWithdrawRequest {
-        denom: configuration.ldt_denom.to_string(),
-        administrator: env.contract.address.to_string(),
-        to_address: balance.address.to_string(), // Withdraw to the marker holder (contributor)
-        amount: vec![Coin {
-            denom: configuration.ldt_denom.to_string(),
-            amount: contribution.mint_ldt_amount.to_string(),
-        }],
-    };
-
-    // Take ownership of the marker coins by transferring them to the contract's address
     let msg_transfer_marker_coins = MsgTransferRequest {
         amount: Some(Coin {
             denom: marker_denom.to_string(),
@@ -106,10 +128,25 @@ pub fn execute_finalize_contribution(
         })
         .collect::<Vec<MsgDeleteAccessRequest>>();
 
-    Ok(Response::new()
-        .add_message(msg_mint_ldt)
-        .add_message(msg_withdraw_ldt)
+    let scope_count = contribution.scope_uuids.len().to_string();
+
+    let mut response = Response::new()
         .add_message(msg_transfer_marker_coins)
         .add_messages(msgs_delete_access)
-        .add_attribute("method", "finalize_contribution"))
+        .add_messages(mint_msgs)
+        .add_attribute("method", "finalize_contribution")
+        .add_attribute("contribution_id", contribution_id.to_string())
+        .add_attribute("contributor", contributor.as_str())
+        .add_attribute("marker_denom", marker_denom)
+        .add_attribute("mint_ldt_amount", contribution.mint_ldt_amount.to_string())
+        .add_attribute("scope_count", scope_count);
+
+    if let Some(ref meta) = configuration.app_metadata {
+        if let Some(ref k) = meta.kind {
+            let truncated: String = k.chars().take(MAX_CONTRACT_APP_METADATA_KIND_LEN).collect();
+            response = response.add_attribute("metadata_kind", truncated);
+        }
+    }
+
+    Ok(response)
 }

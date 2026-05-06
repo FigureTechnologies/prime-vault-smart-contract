@@ -1,4 +1,5 @@
 use crate::error::ContractError;
+use crate::execute::admin::cleanup_orphan_markers::execute_cleanup_orphan_markers;
 use crate::execute::contribution::cancel_contribution::execute_cancel_contribution;
 use crate::execute::contribution::finalize_contribution::execute_finalize_contribution;
 use crate::execute::contribution::initiate_contribution::execute_initialize_contribution;
@@ -11,6 +12,7 @@ use crate::msg::{ExecuteMsg, InstantiateContractMsg, QueryMsg};
 use crate::query::query_config::query_configuration;
 use crate::query::query_contribution::query_pending_contribution;
 use crate::query::query_contribution::query_pending_contribution_by_reference;
+use crate::query::query_contributor::query_contributor_for_scope;
 use crate::query::query_redemption::query_pending_redemption;
 use crate::query::query_redemption::query_pending_redemption_by_reference;
 use cosmwasm_std::{
@@ -81,6 +83,9 @@ pub fn execute(
         ExecuteMsg::CancelRedemption { redemption_id } => {
             execute_cancel_redemption(deps, info, redemption_id)
         }
+        ExecuteMsg::CleanupOrphanMarkers { marker_denoms } => {
+            execute_cleanup_orphan_markers(deps, env, info, marker_denoms)
+        }
     }
 }
 
@@ -100,5 +105,8 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> Result<Binary, ContractErr
             &query_pending_redemption_by_reference(deps, redemption_ref)?,
         )?),
         QueryMsg::GetConfiguration {} => Ok(to_json_binary(&query_configuration(deps)?)?),
+        QueryMsg::GetContributorForScope { scope_uuid } => Ok(to_json_binary(
+            &query_contributor_for_scope(deps, scope_uuid)?,
+        )?),
     }
 }

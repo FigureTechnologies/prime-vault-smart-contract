@@ -172,6 +172,16 @@ pub fn get_nft(deps: Deps, scope_address_str: &str) -> Result<Nft, ContractError
     })
 }
 
+/// Normalizes a single scope UUID for lookups (lowercase) and validates format.
+pub fn validate_and_normalize_scope_uuid(scope_uuid: &str) -> Result<String, ContractError> {
+    if Uuid::parse_str(scope_uuid).is_err() {
+        return Err(ContractError::InvalidScopeUuidFormat(
+            scope_uuid.to_string(),
+        ));
+    }
+    Ok(scope_uuid.to_lowercase())
+}
+
 pub fn validate_and_normalize_scope_uuids(
     scope_uuids: &Vec<String>,
 ) -> Result<Vec<String>, ContractError> {

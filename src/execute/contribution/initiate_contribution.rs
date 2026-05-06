@@ -1,5 +1,5 @@
 use crate::error::ContractError;
-use crate::state::{PendingContribution, CONTRIBUTION_REFERENCES};
+use crate::state::{PendingContribution, CONTRIBUTION_REFERENCES, MAX_CONTRIBUTION_REF_LEN};
 use crate::state::{CONFIGURATION, CONTRIBUTION_COUNTER, PENDING_CONTRIBUTIONS};
 use crate::util::validate_and_normalize_scope_uuids;
 use cosmwasm_std::{DepsMut, MessageInfo, Response};
@@ -13,11 +13,6 @@ pub fn execute_initialize_contribution(
     mint_ldt_amount: u64,
     contribution_ref: Option<String>,
 ) -> Result<Response, ContractError> {
-    // Make sure the mint amount is greater than 0
-    if mint_ldt_amount == 0 {
-        return Err(ContractError::InvalidMintAmount);
-    }
-
     // Read the contract configuration
     let configuration = CONFIGURATION.load(deps.storage)?;
 
@@ -27,11 +22,8 @@ pub fn execute_initialize_contribution(
     }
 
     if let Some(ref contribution_ref) = contribution_ref {
-        // Put a reasonable limit on the length of the contribution reference string to prevent abuse.
-        // This is not used by the contract, but it can be helpful for off-chain indexing and tracking of contributions,
-        // so we want to allow it to be something human readable while also preventing abuse of excessively long strings.
-        let max_length = 128;
-        if contribution_ref.len() > max_length {
+        // This is not used by the contract, but it can be helpful for off-chain indexing and tracking of contributions.
+        if contribution_ref.len() > MAX_CONTRIBUTION_REF_LEN {
             return Err(ContractError::ReferenceTooLong);
         }
 
@@ -120,18 +112,16 @@ mod tests {
     use provwasm_mocks::mock_provenance_dependencies;
 
     pub const OTC_ADDR_STR: &str = "otc";
-    pub const TRUST_ADDR_STR: &str = "trust";
     pub const REDEMPTION_ADMIN_STR: &str = "redemption_marker_admin";
 
     fn setup_config(deps: DepsMut) {
         let otc_address = Addr::unchecked(OTC_ADDR_STR);
-        let trust_address = Addr::unchecked(TRUST_ADDR_STR);
         let redemption_marker_admin = Addr::unchecked(REDEMPTION_ADMIN_STR);
         let config = Configuration {
             otc_address,
-            trust_address,
             ldt_denom: "ldt.token.test".to_string(),
             redemption_marker_admin,
+            app_metadata: None,
         };
         CONFIGURATION.save(deps.storage, &config).unwrap();
     }

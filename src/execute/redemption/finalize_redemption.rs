@@ -1,6 +1,9 @@
 use crate::{
     error::ContractError,
-    state::{CONFIGURATION, PENDING_REDEMPTIONS, REDEMPTION_REFERENCES},
+    state::{
+        clear_contributor_attribution_for_scopes, CONFIGURATION, PENDING_REDEMPTIONS,
+        REDEMPTION_REFERENCES,
+    },
     util::{get_amount_holding, get_marker},
 };
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response, Uint128};
@@ -115,6 +118,9 @@ pub fn execute_finalize_redemption(
         administrator: env.contract.address.to_string(),
         removed_address: env.contract.address.to_string(),
     };
+
+    clear_contributor_attribution_for_scopes(deps.storage, &redemption.scope_uuids)
+        .map_err(ContractError::from)?;
 
     // Clear out the redemption record since it has been finalized
     PENDING_REDEMPTIONS.remove(deps.storage, redemption_id);
