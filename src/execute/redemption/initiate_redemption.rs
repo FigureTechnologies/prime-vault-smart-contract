@@ -1,8 +1,8 @@
 use crate::{
     error::ContractError,
     state::{
-        PendingRedemption, CONFIGURATION, PENDING_REDEMPTIONS, REDEMPTION_COUNTER,
-        REDEMPTION_REFERENCES,
+        PendingRedemption, CONFIGURATION, MAX_REDEMPTION_REF_LEN, PENDING_REDEMPTIONS,
+        REDEMPTION_COUNTER, REDEMPTION_REFERENCES,
     },
     util::{create_marker_messages, validate_and_normalize_scope_uuids},
 };
@@ -46,11 +46,8 @@ pub fn execute_initiate_redemption(
     }
 
     if let Some(ref redemption_ref) = redemption_ref {
-        // Put a reasonable limit on the length of the redemption reference string to prevent abuse.
-        // This is not used by the contract, but it can be helpful for off-chain indexing and tracking of redemptions,
-        // so we want to allow it to be something human readable while also preventing abuse of excessively long strings.
-        let max_length = 128;
-        if redemption_ref.len() > max_length {
+        // This is not used by the contract, but it can be helpful for off-chain indexing and tracking of redemptions.
+        if redemption_ref.len() > MAX_REDEMPTION_REF_LEN {
             return Err(ContractError::ReferenceTooLong);
         }
 
