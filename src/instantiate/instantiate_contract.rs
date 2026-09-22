@@ -3,7 +3,7 @@ use crate::msg::InstantiateContractMsg;
 use crate::state::{
     validate_contract_app_metadata, CONFIGURATION, CONTRACT_INFO, CONTRACT_NAME, CONTRACT_VERSION,
 };
-use crate::util::create_marker_messages;
+use crate::util::{create_marker_messages, require_denom_not_address};
 use cosmwasm_std::{DepsMut, Env, Response};
 use cw2::ContractVersion;
 use provwasm_std::types::cosmos::base::v1beta1::Coin;
@@ -18,6 +18,10 @@ pub fn instantiate_contract(
     let validated_redemption_marker_admin = deps.api.addr_validate(&msg.redemption_marker_admin)?;
 
     validate_contract_app_metadata(&msg.app_metadata)?;
+
+    // An address-shaped LDT denom would resolve a different marker on every denom-keyed lookup,
+    // making mint and burn permanently unreachable. Reject it before the marker is created.
+    require_denom_not_address(deps.as_ref(), &msg.ldt_denom)?;
 
     // Store the contract configuration
     CONFIGURATION.save(
@@ -37,12 +41,13 @@ pub fn instantiate_contract(
     };
     CONTRACT_INFO.save(deps.storage, &contract_info)?;
 
-    // Create the loan dicer token marker with the contract as the admin
+    // Create the LDT marker with the contract as admin and governance recovery enabled.
+    // Initial supply is zero; Provenance 1.30+ no longer treats zero or 100% supply as admin.
     let ldt_marker_messages = create_marker_messages(
         env.contract.address.to_string(),
         Coin {
             denom: msg.ldt_denom.clone(),
-            amount: "0".to_string(), // Initial supply of 0, we will mint later during contribution finalization
+            amount: "0".to_string(),
         },
         vec![AccessGrant {
             address: env.contract.address.to_string(),
@@ -54,6 +59,7 @@ pub fn instantiate_contract(
             ],
         }],
         MarkerType::Coin,
+        true,
     );
 
     Ok(Response::new()
@@ -65,8 +71,10 @@ pub fn instantiate_contract(
 mod tests {
     use super::*;
     use crate::state::{ContractAppMetadata, CONFIGURATION};
+    use crate::testing::typed_msgs;
     use cosmwasm_std::testing::{mock_env, MockApi};
     use provwasm_mocks::mock_provenance_dependencies;
+    use provwasm_std::types::provenance::marker::v1::{Access, MsgAddMarkerRequest};
 
     fn base_msg(api: MockApi) -> InstantiateContractMsg {
         InstantiateContractMsg {
@@ -92,6 +100,22 @@ mod tests {
 
         let cfg = CONFIGURATION.load(&deps.storage).unwrap();
         assert_eq!(cfg.app_metadata, Some(meta));
+    }
+
+    #[test]
+    fn rejects_address_shaped_ldt_denom() {
+        let mut deps = mock_provenance_dependencies();
+        let mut msg = base_msg(deps.api.clone());
+        let address_denom = deps.api.addr_make("address-shaped-denom").to_string();
+        msg.ldt_denom = address_denom.clone();
+
+        let err = instantiate_contract(deps.as_mut(), mock_env(), msg).unwrap_err();
+
+        assert!(matches!(
+            err,
+            ContractError::MarkerDenomIsAddress { denom } if denom == address_denom
+        ));
+        assert!(CONFIGURATION.may_load(&deps.storage).unwrap().is_none());
     }
 
     #[test]
@@ -124,5 +148,37 @@ mod tests {
             err,
             ContractError::ContractAppMetadataTooLong { field: "data" }
         ));
+    }
+
+    #[test]
+    fn creates_ldt_marker_with_zero_supply_and_governance_control() {
+        let mut deps = mock_provenance_dependencies();
+        let env = mock_env();
+        let contract = env.contract.address.to_string();
+        let msg = base_msg(deps.api.clone());
+
+        let res = instantiate_contract(deps.as_mut(), env, msg).unwrap();
+
+        let created: Vec<MsgAddMarkerRequest> = typed_msgs(&res, MsgAddMarkerRequest::TYPE_URL);
+        assert_eq!(created.len(), 1);
+        assert_eq!(
+            created[0]
+                .amount
+                .as_ref()
+                .map(|c| (c.denom.as_str(), c.amount.as_str())),
+            Some(("ldt.token.test", "0"))
+        );
+        assert!(created[0].allow_governance_control);
+        assert_eq!(created[0].access_list.len(), 1);
+        assert_eq!(created[0].access_list[0].address, contract);
+        assert_eq!(
+            created[0].access_list[0].permissions,
+            vec![
+                Access::Admin as i32,
+                Access::Mint as i32,
+                Access::Burn as i32,
+                Access::Withdraw as i32,
+            ]
+        );
     }
 }
