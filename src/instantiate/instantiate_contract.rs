@@ -1,7 +1,8 @@
 use crate::error::ContractError;
 use crate::msg::InstantiateContractMsg;
 use crate::state::{
-    validate_contract_app_metadata, CONFIGURATION, CONTRACT_INFO, CONTRACT_NAME, CONTRACT_VERSION,
+    validate_contract_app_metadata, LdtMarkerType, CONFIGURATION, CONTRACT_INFO, CONTRACT_NAME,
+    CONTRACT_VERSION,
 };
 use crate::util::{create_marker_messages, require_denom_not_address};
 use cosmwasm_std::{DepsMut, Env, Response};
@@ -31,6 +32,9 @@ pub fn instantiate_contract(
             ldt_denom: msg.ldt_denom.clone(),
             redemption_marker_admin: validated_redemption_marker_admin.clone(),
             app_metadata: msg.app_metadata,
+            marker_type: msg.marker_type,
+            allow_forced_transfer: msg.allow_forced_transfer,
+            required_attributes: msg.required_attributes.clone(),
         },
     )?;
 
@@ -43,6 +47,20 @@ pub fn instantiate_contract(
 
     // Create the LDT marker with the contract as admin and governance recovery enabled.
     // Initial supply is zero; Provenance 1.30+ no longer treats zero or 100% supply as admin.
+    let marker_type = match msg.marker_type {
+        LdtMarkerType::Coin => MarkerType::Coin,
+        LdtMarkerType::Restricted => MarkerType::Restricted,
+    };
+    let mut permissions = vec![
+        Access::Admin as i32,
+        Access::Mint as i32,
+        Access::Burn as i32,
+        Access::Withdraw as i32,
+    ];
+    if marker_type == MarkerType::Restricted {
+        permissions.push(Access::Transfer as i32);
+    }
+
     let ldt_marker_messages = create_marker_messages(
         env.contract.address.to_string(),
         Coin {
@@ -51,15 +69,12 @@ pub fn instantiate_contract(
         },
         vec![AccessGrant {
             address: env.contract.address.to_string(),
-            permissions: vec![
-                Access::Admin as i32,
-                Access::Mint as i32,
-                Access::Burn as i32,
-                Access::Withdraw as i32,
-            ],
+            permissions,
         }],
-        MarkerType::Coin,
+        marker_type,
         true,
+        msg.allow_forced_transfer,
+        msg.required_attributes,
     );
 
     Ok(Response::new()
@@ -82,6 +97,9 @@ mod tests {
             ldt_denom: "ldt.token.test".to_string(),
             redemption_marker_admin: api.addr_make("redemption_marker_admin").to_string(),
             app_metadata: None,
+            marker_type: LdtMarkerType::default(),
+            allow_forced_transfer: false,
+            required_attributes: vec![],
         }
     }
 
@@ -93,7 +111,7 @@ mod tests {
             data: Some(r#"{"x":1}"#.to_string()),
         };
 
-        let mut msg = base_msg(deps.api.clone());
+        let mut msg = base_msg(deps.api);
         msg.app_metadata = Some(meta.clone());
 
         instantiate_contract(deps.as_mut(), mock_env(), msg).unwrap();
@@ -105,7 +123,7 @@ mod tests {
     #[test]
     fn rejects_address_shaped_ldt_denom() {
         let mut deps = mock_provenance_dependencies();
-        let mut msg = base_msg(deps.api.clone());
+        let mut msg = base_msg(deps.api);
         let address_denom = deps.api.addr_make("address-shaped-denom").to_string();
         msg.ldt_denom = address_denom.clone();
 
@@ -121,7 +139,7 @@ mod tests {
     #[test]
     fn rejects_kind_too_long() {
         let mut deps = mock_provenance_dependencies();
-        let mut msg = base_msg(deps.api.clone());
+        let mut msg = base_msg(deps.api);
         msg.app_metadata = Some(ContractAppMetadata {
             kind: Some("x".repeat(65)),
             data: None,
@@ -137,7 +155,7 @@ mod tests {
     #[test]
     fn rejects_data_too_long() {
         let mut deps = mock_provenance_dependencies();
-        let mut msg = base_msg(deps.api.clone());
+        let mut msg = base_msg(deps.api);
         msg.app_metadata = Some(ContractAppMetadata {
             kind: None,
             data: Some("y".repeat(1025)),
@@ -155,7 +173,7 @@ mod tests {
         let mut deps = mock_provenance_dependencies();
         let env = mock_env();
         let contract = env.contract.address.to_string();
-        let msg = base_msg(deps.api.clone());
+        let msg = base_msg(deps.api);
 
         let res = instantiate_contract(deps.as_mut(), env, msg).unwrap();
 
@@ -169,6 +187,9 @@ mod tests {
             Some(("ldt.token.test", "0"))
         );
         assert!(created[0].allow_governance_control);
+        assert_eq!(created[0].marker_type, MarkerType::Coin as i32);
+        assert!(!created[0].allow_forced_transfer);
+        assert!(created[0].required_attributes.is_empty());
         assert_eq!(created[0].access_list.len(), 1);
         assert_eq!(created[0].access_list[0].address, contract);
         assert_eq!(
@@ -179,6 +200,48 @@ mod tests {
                 Access::Burn as i32,
                 Access::Withdraw as i32,
             ]
+        );
+    }
+
+    #[test]
+    fn creates_restricted_ldt_marker_with_forced_transfer_and_required_attributes() {
+        let mut deps = mock_provenance_dependencies();
+        let env = mock_env();
+        let contract = env.contract.address.to_string();
+        let mut msg = base_msg(deps.api);
+        msg.marker_type = LdtMarkerType::Restricted;
+        msg.allow_forced_transfer = true;
+        msg.required_attributes = vec!["loan-dicer.pi-holder".to_string()];
+
+        let res = instantiate_contract(deps.as_mut(), env, msg).unwrap();
+
+        let created: Vec<MsgAddMarkerRequest> = typed_msgs(&res, MsgAddMarkerRequest::TYPE_URL);
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0].marker_type, MarkerType::Restricted as i32);
+        assert!(created[0].allow_forced_transfer);
+        assert_eq!(
+            created[0].required_attributes,
+            vec!["loan-dicer.pi-holder".to_string()]
+        );
+        assert_eq!(created[0].access_list.len(), 1);
+        assert_eq!(created[0].access_list[0].address, contract);
+        assert_eq!(
+            created[0].access_list[0].permissions,
+            vec![
+                Access::Admin as i32,
+                Access::Mint as i32,
+                Access::Burn as i32,
+                Access::Withdraw as i32,
+                Access::Transfer as i32,
+            ]
+        );
+
+        let cfg = CONFIGURATION.load(&deps.storage).unwrap();
+        assert_eq!(cfg.marker_type, LdtMarkerType::Restricted);
+        assert!(cfg.allow_forced_transfer);
+        assert_eq!(
+            cfg.required_attributes,
+            vec!["loan-dicer.pi-holder".to_string()]
         );
     }
 }

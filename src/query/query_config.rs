@@ -10,6 +10,7 @@ pub fn query_configuration(deps: Deps) -> Result<crate::state::Configuration, Co
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::LdtMarkerType;
     use crate::testing::{TestCtx, LDT_DENOM};
 
     #[test]
@@ -20,5 +21,8 @@ mod tests {
         assert_eq!(cfg.redemption_marker_admin, ctx.redemption_admin);
         assert_eq!(cfg.ldt_denom, LDT_DENOM);
         assert!(cfg.app_metadata.is_none());
+        assert_eq!(cfg.marker_type, LdtMarkerType::Coin);
+        assert!(!cfg.allow_forced_transfer);
+        assert!(cfg.required_attributes.is_empty());
     }
 }

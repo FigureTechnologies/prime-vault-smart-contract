@@ -120,6 +120,8 @@ pub fn execute_initiate_swap(
         }],
         MarkerType::Restricted,
         true,
+        false,
+        vec![],
     );
 
     // Withdraw the coins from the pool marker to the contract to keep

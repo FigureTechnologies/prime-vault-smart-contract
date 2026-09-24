@@ -117,6 +117,8 @@ pub fn execute_initiate_redemption(
         }],
         MarkerType::Restricted,
         true,
+        false,
+        vec![],
     );
 
     // Withdraw the coints from the redemption marker into the contract's address

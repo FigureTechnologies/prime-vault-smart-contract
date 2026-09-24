@@ -103,6 +103,9 @@ mod tests {
                 ldt_denom: LDT_DENOM.to_string(),
                 redemption_marker_admin: ctx.redemption_admin.to_string(),
                 app_metadata: None,
+                marker_type: crate::state::LdtMarkerType::default(),
+                allow_forced_transfer: false,
+                required_attributes: vec![],
             },
         )
         .unwrap();

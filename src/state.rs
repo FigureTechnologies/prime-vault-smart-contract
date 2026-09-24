@@ -24,6 +24,23 @@ pub struct ContractAppMetadata {
     pub data: Option<String>,
 }
 
+/// Marker type used when creating the loan dicer token denom.
+///
+/// This value is immutable in the Provenance marker module, so it must be
+/// selected correctly when the contract is instantiated.
+#[cw_serde]
+#[derive(Copy, Eq)]
+pub enum LdtMarkerType {
+    Coin,
+    Restricted,
+}
+
+impl Default for LdtMarkerType {
+    fn default() -> Self {
+        Self::Coin
+    }
+}
+
 pub fn validate_contract_app_metadata(
     metadata: &Option<ContractAppMetadata>,
 ) -> Result<(), ContractError> {
@@ -100,6 +117,15 @@ pub struct Configuration {
     pub redemption_marker_admin: Addr,
     #[serde(default)]
     pub app_metadata: Option<ContractAppMetadata>,
+    /// Immutable type of the LDT marker created during instantiation.
+    #[serde(default)]
+    pub marker_type: LdtMarkerType,
+    /// Whether the LDT marker permits an authorized address to force-transfer tokens.
+    #[serde(default)]
+    pub allow_forced_transfer: bool,
+    /// Attributes an address must hold to transfer LDT without marker transfer access.
+    #[serde(default)]
+    pub required_attributes: Vec<String>,
 }
 
 // state items
