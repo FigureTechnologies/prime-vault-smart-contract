@@ -3,8 +3,8 @@ use crate::{
     execute::assert_no_funds,
     pending::register_pending_denom,
     state::{
-        PendingDenomOwner, PendingRedemption, CONFIGURATION, MAX_REDEMPTION_REF_LEN,
-        PENDING_REDEMPTIONS, REDEMPTION_COUNTER, REDEMPTION_REFERENCES,
+        PendingDenomOwner, PendingSwap, CONFIGURATION, MAX_SWAP_REF_LEN, PENDING_SWAPS,
+        SWAP_COUNTER, SWAP_REFERENCES,
     },
     util::{create_marker_messages, require_denom_not_address},
 };
@@ -14,30 +14,31 @@ use provwasm_std::types::{
     cosmos::base::v1beta1::Coin, provenance::marker::v1::MsgWithdrawRequest,
 };
 
-pub fn execute_initiate_redemption(
+pub fn execute_initiate_swap(
     deps: DepsMut,
     info: MessageInfo,
     env: Env,
     pool_denom: String,
     num_coins: u64,
-    redeemer_address: String,
-    redemption_ref: Option<String>,
+    contributor_address: String,
+    swap_ref: Option<String>,
 ) -> Result<Response, ContractError> {
     // Ensure no funds are sent with this message
     assert_no_funds(&info)?;
 
-    // Make sure num_coins is greater than 0 since we don't want to create a redemption marker with 0 coins
+    // Number of coins is the number of coins that will be created on the swap out marker,
+    // which needs to be greater than 0
     if num_coins == 0 {
         return Err(ContractError::InvalidNumberOfCoins);
     }
 
-    // Validate the redeemer address before proceeding; this will be stored with the pending redemption
-    let redeemer_addr = deps.api.addr_validate(&redeemer_address)?;
+    // Validate the contributor address
+    let contributor_addr = deps.api.addr_validate(&contributor_address)?;
 
-    // Read the contract configuration from state
+    // Load the contract configuration to access relevant settings
     let configuration = CONFIGURATION.load(deps.storage)?;
 
-    // Make sure the sender is authorized as the OTC
+    // Verify that the sender is the authorized OTC address
     if configuration.otc_address != info.sender {
         return Err(ContractError::UnauthorizedOTC);
     }
@@ -47,60 +48,62 @@ pub fn execute_initiate_redemption(
     // it. Reject it here, before the marker is created.
     require_denom_not_address(deps.as_ref(), &pool_denom)?;
 
-    if let Some(ref redemption_ref) = redemption_ref {
-        // This is not used by the contract, but it can be helpful for off-chain indexing and tracking of redemptions.
-        if redemption_ref.len() > MAX_REDEMPTION_REF_LEN {
+    if let Some(ref swap_ref) = swap_ref {
+        if swap_ref.len() > MAX_SWAP_REF_LEN {
             return Err(ContractError::ReferenceTooLong);
         }
 
         // An empty reference would claim the empty key and block every later record from using
         // one, and lookups by empty string would return an unrelated record.
-        if redemption_ref.trim().is_empty() {
+        if swap_ref.trim().is_empty() {
             return Err(ContractError::ReferenceEmpty);
         }
 
-        // Make sure that the reference string isn't already being used
-        REDEMPTION_REFERENCES
-            .may_load(deps.storage, redemption_ref.clone())?
+        // Store the reference
+        SWAP_REFERENCES
+            .may_load(deps.storage, swap_ref.clone())?
             .map_or(Ok(()), |_| {
                 Err(ContractError::ReferenceAlreadyExists {
-                    reference: redemption_ref.clone(),
+                    reference: swap_ref.clone(),
                 })
             })?;
     }
 
-    // Store the redemption
-    let redemption = PendingRedemption {
-        burn_ldt_amount: None,
+    // Create the pending swap record
+    let swap = PendingSwap {
         pool_denom: pool_denom.clone(),
         pooling_complete: false,
-        redemption_ref: redemption_ref.clone(),
-        redeemer_addr,
+        contributor_addr,
+        swap_ref: swap_ref.clone(),
+        mint_ldt_amount: 0,
+        burn_ldt_amount: 0,
+        incoming_marker_denom: None,
+        stored_incoming_access_grants: None,
     };
 
-    let redemption_id = REDEMPTION_COUNTER.may_load(deps.storage)?.unwrap_or(0);
+    // Get the next swap ID
+    let swap_id = SWAP_COUNTER.may_load(deps.storage)?.unwrap_or(0);
 
     // Register the pending denom so that it cannot be used in any other contract transactions
     register_pending_denom(
         deps.storage,
         pool_denom.clone(),
-        PendingDenomOwner::Redemption { id: redemption_id },
+        PendingDenomOwner::Swap { id: swap_id },
     )?;
-    PENDING_REDEMPTIONS.save(deps.storage, redemption_id, &redemption)?;
 
-    // If a reference is provided, store the mapping to the redemption ID
-    if let Some(ref redemption_ref) = redemption_ref {
-        REDEMPTION_REFERENCES.save(deps.storage, redemption_ref.clone(), &redemption_id)?;
+    // Save the pending swap record and reference
+    PENDING_SWAPS.save(deps.storage, swap_id, &swap)?;
+    if let Some(ref swap_ref) = swap_ref {
+        SWAP_REFERENCES.save(deps.storage, swap_ref.clone(), &swap_id)?;
     }
 
-    // Increment the redemption counter
-    REDEMPTION_COUNTER.save(deps.storage, &(redemption_id + 1))?;
+    // Increment the swap counter so the next swap gets a unique ID
+    SWAP_COUNTER.save(deps.storage, &(swap_id + 1))?;
 
-    // Create the redemption marker with the specified number of coins and grant access to
-    // the contract When the redemption is confirmed, the contract will remove its access and
-    // add access for the redemption marker admin. Governance control stays enabled so the
-    // pooled scopes remain recoverable if the redemption marker admin key is ever lost.
-    let redemption_marker_messages = create_marker_messages(
+    // Create the pool marker for swapping out assets.
+    // Governance control stays enabled so the pooled scopes remain recoverable if the
+    // redemption marker admin key is ever lost.
+    let pool_marker_messages = create_marker_messages(
         env.contract.address.to_string(),
         Coin {
             denom: pool_denom.clone(),
@@ -119,7 +122,8 @@ pub fn execute_initiate_redemption(
         true,
     );
 
-    // Withdraw the coints from the redemption marker into the contract's address
+    // Withdraw the coins from the pool marker to the contract to keep
+    // the ownership model consistent during pooling (contract owns the pooled assets)
     let msg_withdraw = MsgWithdrawRequest {
         denom: pool_denom.clone(),
         administrator: env.contract.address.to_string(),
@@ -131,69 +135,79 @@ pub fn execute_initiate_redemption(
     };
 
     Ok(Response::new()
-        .add_messages(redemption_marker_messages)
+        .add_messages(pool_marker_messages)
         .add_message(msg_withdraw)
-        .add_attribute("redemption_id", redemption_id.to_string())
-        .add_attribute("method", "initiate_redemption"))
+        .add_attribute("swap_id", swap_id.to_string())
+        .add_attribute("method", "initiate_swap"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::state::{
-        PendingDenomOwner, MAX_REDEMPTION_REF_LEN, PENDING_DENOMS, PENDING_REDEMPTIONS,
-        REDEMPTION_COUNTER, REDEMPTION_REFERENCES,
+        PendingDenomOwner, MAX_SWAP_REF_LEN, PENDING_DENOMS, PENDING_SWAPS, SWAP_REFERENCES,
     };
     use crate::testing::{typed_msgs, TestCtx, POOL_DENOM};
-    use provwasm_std::types::provenance::marker::v1::{MsgAddMarkerRequest, MsgWithdrawRequest};
+    use provwasm_std::types::provenance::marker::v1::{
+        MsgActivateRequest, MsgAddMarkerRequest, MsgWithdrawRequest,
+    };
 
     #[test]
-    fn otc_creates_pending_redemption_without_burn_amount() {
+    fn otc_creates_pending_swap_and_pool_marker() {
         let mut ctx = TestCtx::new();
 
         let env = ctx.env.clone();
         let otc_info = ctx.otc_info();
-        let redeemer_addr = ctx.redeemer.to_string();
-        let res = execute_initiate_redemption(
+        let contributor_addr = ctx.contributor.to_string();
+        let res = execute_initiate_swap(
             ctx.deps.as_mut(),
             otc_info,
             env,
             POOL_DENOM.to_string(),
-            2,
-            redeemer_addr,
-            Some("redemption-ref".to_string()),
+            3,
+            contributor_addr,
+            Some("swap-ref".to_string()),
         )
         .unwrap();
 
         assert_eq!(
             res.attributes
                 .iter()
-                .find(|a| a.key == "redemption_id")
+                .find(|a| a.key == "swap_id")
                 .map(|a| a.value.as_str()),
             Some("0")
         );
 
-        let stored = PENDING_REDEMPTIONS.load(&ctx.deps.storage, 0).unwrap();
-        assert_eq!(stored.redeemer_addr, ctx.redeemer);
-        assert!(stored.burn_ldt_amount.is_none());
-        assert!(!stored.pooling_complete);
-        assert!(REDEMPTION_REFERENCES
-            .may_load(&ctx.deps.storage, "redemption-ref".to_string())
-            .unwrap()
-            .is_some());
+        let swap = PENDING_SWAPS.load(&ctx.deps.storage, 0).unwrap();
+        assert_eq!(swap.contributor_addr, ctx.contributor);
+        assert_eq!(swap.pool_denom, POOL_DENOM);
+        assert!(!swap.pooling_complete);
+        assert_eq!(swap.mint_ldt_amount, 0);
+        assert_eq!(swap.burn_ldt_amount, 0);
+        assert!(swap.incoming_marker_denom.is_none());
         assert_eq!(
             PENDING_DENOMS
                 .load(&ctx.deps.storage, POOL_DENOM.to_string())
                 .unwrap(),
-            PendingDenomOwner::Redemption { id: 0 }
+            PendingDenomOwner::Swap { id: 0 }
         );
+        assert!(SWAP_REFERENCES
+            .may_load(&ctx.deps.storage, "swap-ref".to_string())
+            .unwrap()
+            .is_some());
 
         let created: Vec<MsgAddMarkerRequest> = typed_msgs(&res, MsgAddMarkerRequest::TYPE_URL);
+        assert_eq!(created.len(), 1);
         assert_eq!(
-            created[0].amount.as_ref().map(|c| c.amount.as_str()),
-            Some("2")
+            created[0]
+                .amount
+                .as_ref()
+                .map(|c| (c.denom.as_str(), c.amount.as_str())),
+            Some((POOL_DENOM, "3"))
         );
         assert!(created[0].allow_governance_control);
+        let activated: Vec<MsgActivateRequest> = typed_msgs(&res, MsgActivateRequest::TYPE_URL);
+        assert_eq!(activated.len(), 1);
         let withdraws: Vec<MsgWithdrawRequest> = typed_msgs(&res, MsgWithdrawRequest::TYPE_URL);
         assert_eq!(withdraws[0].to_address, ctx.contract_addr());
     }
@@ -201,37 +215,40 @@ mod tests {
     #[test]
     fn rejects_non_otc() {
         let mut ctx = TestCtx::new();
+
         let env = ctx.env.clone();
         let stranger_info = ctx.stranger_info();
-        let redeemer_addr = ctx.redeemer.to_string();
-        let err = execute_initiate_redemption(
+        let contributor_addr = ctx.contributor.to_string();
+        let err = execute_initiate_swap(
             ctx.deps.as_mut(),
             stranger_info,
             env,
             POOL_DENOM.to_string(),
             1,
-            redeemer_addr,
+            contributor_addr,
             None,
         )
         .unwrap_err();
+
         assert!(matches!(err, ContractError::UnauthorizedOTC));
     }
 
     #[test]
     fn rejects_address_shaped_pool_denom_before_creating_the_marker() {
         let mut ctx = TestCtx::new();
+
         let env = ctx.env.clone();
         let otc_info = ctx.otc_info();
-        let redeemer_addr = ctx.redeemer.to_string();
+        let contributor_addr = ctx.contributor.to_string();
         let address_denom = ctx.deps.api.addr_make("address-shaped-denom").to_string();
 
-        let err = execute_initiate_redemption(
+        let err = execute_initiate_swap(
             ctx.deps.as_mut(),
             otc_info,
             env,
             address_denom.clone(),
-            2,
-            redeemer_addr,
+            3,
+            contributor_addr,
             None,
         )
         .unwrap_err();
@@ -240,8 +257,12 @@ mod tests {
             err,
             ContractError::MarkerDenomIsAddress { denom } if denom == address_denom
         ));
-        assert!(PENDING_REDEMPTIONS
+        assert!(PENDING_SWAPS
             .may_load(&ctx.deps.storage, 0)
+            .unwrap()
+            .is_none());
+        assert!(PENDING_DENOMS
+            .may_load(&ctx.deps.storage, address_denom)
             .unwrap()
             .is_none());
     }
@@ -249,19 +270,21 @@ mod tests {
     #[test]
     fn rejects_zero_coins() {
         let mut ctx = TestCtx::new();
+
         let env = ctx.env.clone();
         let otc_info = ctx.otc_info();
-        let redeemer_addr = ctx.redeemer.to_string();
-        let err = execute_initiate_redemption(
+        let contributor_addr = ctx.contributor.to_string();
+        let err = execute_initiate_swap(
             ctx.deps.as_mut(),
             otc_info,
             env,
             POOL_DENOM.to_string(),
             0,
-            redeemer_addr,
+            contributor_addr,
             None,
         )
         .unwrap_err();
+
         assert!(matches!(err, ContractError::InvalidNumberOfCoins));
     }
 
@@ -269,34 +292,36 @@ mod tests {
     fn rejects_duplicate_reference() {
         let mut ctx = TestCtx::new();
         let info = ctx.otc_info();
+
         let env = ctx.env.clone();
-        let redeemer_addr = ctx.redeemer.to_string();
-        execute_initiate_redemption(
+        let contributor_addr = ctx.contributor.to_string();
+        execute_initiate_swap(
             ctx.deps.as_mut(),
             info.clone(),
             env,
             POOL_DENOM.to_string(),
             1,
-            redeemer_addr,
-            Some("redemption-ref".to_string()),
+            contributor_addr,
+            Some("swap-ref".to_string()),
         )
         .unwrap();
 
         let env = ctx.env.clone();
-        let redeemer_addr = ctx.redeemer.to_string();
-        let err = execute_initiate_redemption(
+        let contributor_addr = ctx.contributor.to_string();
+        let err = execute_initiate_swap(
             ctx.deps.as_mut(),
             info,
             env,
             "other.pool".to_string(),
             1,
-            redeemer_addr,
-            Some("redemption-ref".to_string()),
+            contributor_addr,
+            Some("swap-ref".to_string()),
         )
         .unwrap_err();
+
         assert!(matches!(
             err,
-            ContractError::ReferenceAlreadyExists { reference } if reference == "redemption-ref"
+            ContractError::ReferenceAlreadyExists { reference } if reference == "swap-ref"
         ));
     }
 
@@ -305,27 +330,27 @@ mod tests {
         let mut ctx = TestCtx::new();
         let info = ctx.otc_info();
         let env = ctx.env.clone();
-        let redeemer_addr = ctx.redeemer.to_string();
-        execute_initiate_redemption(
+        let contributor_addr = ctx.contributor.to_string();
+        execute_initiate_swap(
             ctx.deps.as_mut(),
             info.clone(),
             env,
             POOL_DENOM.to_string(),
             1,
-            redeemer_addr,
+            contributor_addr,
             None,
         )
         .unwrap();
 
         let env = ctx.env.clone();
-        let redeemer_addr = ctx.redeemer.to_string();
-        let err = execute_initiate_redemption(
+        let contributor_addr = ctx.contributor.to_string();
+        let err = execute_initiate_swap(
             ctx.deps.as_mut(),
             info,
             env,
             POOL_DENOM.to_string(),
             1,
-            redeemer_addr,
+            contributor_addr,
             None,
         )
         .unwrap_err();
@@ -338,19 +363,21 @@ mod tests {
     #[test]
     fn rejects_reference_too_long() {
         let mut ctx = TestCtx::new();
+
         let env = ctx.env.clone();
         let otc_info = ctx.otc_info();
-        let redeemer_addr = ctx.redeemer.to_string();
-        let err = execute_initiate_redemption(
+        let contributor_addr = ctx.contributor.to_string();
+        let err = execute_initiate_swap(
             ctx.deps.as_mut(),
             otc_info,
             env,
             POOL_DENOM.to_string(),
             1,
-            redeemer_addr,
-            Some("x".repeat(MAX_REDEMPTION_REF_LEN + 1)),
+            contributor_addr,
+            Some("x".repeat(MAX_SWAP_REF_LEN + 1)),
         )
         .unwrap_err();
+
         assert!(matches!(err, ContractError::ReferenceTooLong));
     }
 
@@ -358,22 +385,23 @@ mod tests {
     fn rejects_empty_and_whitespace_only_references() {
         for reference in ["", "   ", "\t\n"] {
             let mut ctx = TestCtx::new();
+
             let env = ctx.env.clone();
             let otc_info = ctx.otc_info();
-            let redeemer_addr = ctx.redeemer.to_string();
-            let err = execute_initiate_redemption(
+            let contributor_addr = ctx.contributor.to_string();
+            let err = execute_initiate_swap(
                 ctx.deps.as_mut(),
                 otc_info,
                 env,
                 POOL_DENOM.to_string(),
                 1,
-                redeemer_addr,
+                contributor_addr,
                 Some(reference.to_string()),
             )
             .unwrap_err();
 
             assert!(matches!(err, ContractError::ReferenceEmpty));
-            assert!(PENDING_REDEMPTIONS
+            assert!(PENDING_SWAPS
                 .may_load(&ctx.deps.storage, 0)
                 .unwrap()
                 .is_none());
@@ -385,14 +413,14 @@ mod tests {
         let mut ctx = TestCtx::new();
         let env = ctx.env.clone();
         let info = ctx.otc_info_with_funds(&TestCtx::unexpected_funds());
-        let redeemer_addr = ctx.redeemer.to_string();
-        let err = execute_initiate_redemption(
+        let contributor_addr = ctx.contributor.to_string();
+        let err = execute_initiate_swap(
             ctx.deps.as_mut(),
             info,
             env,
             POOL_DENOM.to_string(),
             1,
-            redeemer_addr,
+            contributor_addr,
             None,
         )
         .unwrap_err();
@@ -400,31 +428,28 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_redeemer_address_without_writing_state() {
+    fn rejects_invalid_contributor_address_without_writing_state() {
         let mut ctx = TestCtx::new();
         let env = ctx.env.clone();
         let otc_info = ctx.otc_info();
-        let err = execute_initiate_redemption(
+        let err = execute_initiate_swap(
             ctx.deps.as_mut(),
             otc_info,
             env,
             POOL_DENOM.to_string(),
             1,
             "not-a-bech32-address".to_string(),
-            Some("redemption-ref".to_string()),
+            Some("swap-ref".to_string()),
         )
         .unwrap_err();
         assert!(matches!(err, ContractError::Std(_)));
-        assert!(PENDING_REDEMPTIONS
+        assert!(PENDING_SWAPS
             .may_load(&ctx.deps.storage, 0)
             .unwrap()
             .is_none());
-        assert!(REDEMPTION_COUNTER
-            .may_load(&ctx.deps.storage)
-            .unwrap()
-            .is_none());
-        assert!(REDEMPTION_REFERENCES
-            .may_load(&ctx.deps.storage, "redemption-ref".to_string())
+        assert!(SWAP_COUNTER.may_load(&ctx.deps.storage).unwrap().is_none());
+        assert!(SWAP_REFERENCES
+            .may_load(&ctx.deps.storage, "swap-ref".to_string())
             .unwrap()
             .is_none());
         assert!(PENDING_DENOMS
