@@ -25,9 +25,11 @@ pub struct InstantiateContractMsg {
     #[serde(default)]
     pub marker_type: LdtMarkerType,
     /// Permit addresses with marker transfer access to force-transfer LDT.
+    /// Only valid when `marker_type` is restricted.
     #[serde(default)]
     pub allow_forced_transfer: bool,
     /// Attributes required to transfer LDT without marker transfer access.
+    /// Only valid when `marker_type` is restricted; names must be unique and well-formed.
     #[serde(default)]
     pub required_attributes: Vec<String>,
 }

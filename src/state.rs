@@ -1,7 +1,10 @@
+use std::collections::HashSet;
+
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::Addr;
 use cw2::ContractVersion;
 use cw_storage_plus::{Item, Map};
+use uuid::Uuid;
 
 use crate::error::ContractError;
 
@@ -57,6 +60,88 @@ pub fn validate_contract_app_metadata(
         }
     }
     Ok(())
+}
+
+/// Forced transfer and required attributes are restricted-marker features. Attribute names
+/// are normalized (lowercase, trimmed segments) and must be unique, matching Provenance name
+/// records. A leading `*.` wildcard is allowed; `*` in any other position is not.
+pub fn validate_ldt_marker_policy(
+    marker_type: LdtMarkerType,
+    allow_forced_transfer: bool,
+    required_attributes: &[String],
+) -> Result<Vec<String>, ContractError> {
+    if marker_type != LdtMarkerType::Restricted {
+        if allow_forced_transfer {
+            return Err(ContractError::InvalidLdtMarkerPolicy(
+                "allow_forced_transfer can only be true when marker_type is restricted".to_string(),
+            ));
+        }
+        if !required_attributes.is_empty() {
+            return Err(ContractError::InvalidLdtMarkerPolicy(
+                "required_attributes can only be set when marker_type is restricted".to_string(),
+            ));
+        }
+        return Ok(vec![]);
+    }
+
+    let mut normalized = Vec::with_capacity(required_attributes.len());
+    let mut seen = HashSet::new();
+    for attribute in required_attributes {
+        let normalized_attribute = normalize_and_validate_required_attribute(attribute)?;
+        if !seen.insert(normalized_attribute.clone()) {
+            return Err(ContractError::InvalidLdtMarkerPolicy(format!(
+                "duplicate required attribute: {normalized_attribute}"
+            )));
+        }
+        normalized.push(normalized_attribute);
+    }
+    Ok(normalized)
+}
+
+fn normalize_and_validate_required_attribute(attribute: &str) -> Result<String, ContractError> {
+    let invalid = || {
+        ContractError::InvalidLdtMarkerPolicy(format!(
+            "invalid required attribute name: {attribute}"
+        ))
+    };
+
+    if attribute.trim().is_empty() {
+        return Err(invalid());
+    }
+
+    let segments: Vec<String> = attribute
+        .split('.')
+        .map(|segment| segment.trim().to_lowercase())
+        .collect();
+    if segments.iter().any(|segment| segment.is_empty()) {
+        return Err(invalid());
+    }
+
+    for (index, segment) in segments.iter().enumerate() {
+        if segment == "*" {
+            if index != 0 || segments.len() < 2 {
+                return Err(invalid());
+            }
+            continue;
+        }
+        if !is_valid_name_segment(segment) {
+            return Err(invalid());
+        }
+    }
+
+    Ok(segments.join("."))
+}
+
+fn is_valid_name_segment(segment: &str) -> bool {
+    if Uuid::parse_str(segment).is_ok() {
+        return true;
+    }
+    if segment.chars().filter(|c| *c == '-').count() > 1 {
+        return false;
+    }
+    segment
+        .chars()
+        .all(|c| c == '-' || c.is_ascii_lowercase() || c.is_ascii_digit())
 }
 
 #[cw_serde]
@@ -153,4 +238,91 @@ pub enum PendingDenomOwner {
     Swap { id: u64 },
     Redemption { id: u64 },
     Contribution { id: u64 },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coin_marker_rejects_forced_transfer() {
+        let err = validate_ldt_marker_policy(LdtMarkerType::Coin, true, &[]).unwrap_err();
+        assert!(matches!(
+            err,
+            ContractError::InvalidLdtMarkerPolicy(ref reason)
+                if reason.contains("allow_forced_transfer")
+        ));
+    }
+
+    #[test]
+    fn coin_marker_rejects_required_attributes() {
+        let err = validate_ldt_marker_policy(
+            LdtMarkerType::Coin,
+            false,
+            &["loan-dicer.pi-holder".to_string()],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ContractError::InvalidLdtMarkerPolicy(ref reason)
+                if reason.contains("required_attributes")
+        ));
+    }
+
+    #[test]
+    fn restricted_marker_normalizes_and_accepts_valid_attributes() {
+        let attrs = validate_ldt_marker_policy(
+            LdtMarkerType::Restricted,
+            true,
+            &[
+                " Loan-Dicer.Pi-Holder ".to_string(),
+                "*.approved.example".to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            attrs,
+            vec![
+                "loan-dicer.pi-holder".to_string(),
+                "*.approved.example".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_required_attributes() {
+        let err = validate_ldt_marker_policy(
+            LdtMarkerType::Restricted,
+            false,
+            &[
+                "loan-dicer.pi-holder".to_string(),
+                "Loan-Dicer.pi-holder".to_string(),
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ContractError::InvalidLdtMarkerPolicy(ref reason)
+                if reason.contains("duplicate") && reason.contains("loan-dicer.pi-holder")
+        ));
+    }
+
+    #[test]
+    fn rejects_empty_or_malformed_required_attributes() {
+        for attribute in ["", "   ", "foo..bar", "*kyc.example", "kyc.*.example", "*"] {
+            let err = validate_ldt_marker_policy(
+                LdtMarkerType::Restricted,
+                false,
+                &[attribute.to_string()],
+            )
+            .unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ContractError::InvalidLdtMarkerPolicy(ref reason) if reason.contains(attribute)
+                ),
+                "expected invalid attribute for {attribute:?}"
+            );
+        }
+    }
 }

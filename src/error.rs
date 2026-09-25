@@ -304,4 +304,8 @@ pub enum ContractError {
     /// Occurs when the burn amount is not specified for a redemption
     #[error("Missing burn amount for redemption")]
     MissingBurnAmount,
+
+    /// Occurs when LDT marker instantiate settings are invalid (type, forced transfer, attributes)
+    #[error("Invalid LDT marker policy: {0}")]
+    InvalidLdtMarkerPolicy(String),
 }

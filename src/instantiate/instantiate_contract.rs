@@ -1,8 +1,8 @@
 use crate::error::ContractError;
 use crate::msg::InstantiateContractMsg;
 use crate::state::{
-    validate_contract_app_metadata, LdtMarkerType, CONFIGURATION, CONTRACT_INFO, CONTRACT_NAME,
-    CONTRACT_VERSION,
+    validate_contract_app_metadata, validate_ldt_marker_policy, LdtMarkerType, CONFIGURATION,
+    CONTRACT_INFO, CONTRACT_NAME, CONTRACT_VERSION,
 };
 use crate::util::{create_marker_messages, require_denom_not_address};
 use cosmwasm_std::{DepsMut, Env, Response};
@@ -19,6 +19,11 @@ pub fn instantiate_contract(
     let validated_redemption_marker_admin = deps.api.addr_validate(&msg.redemption_marker_admin)?;
 
     validate_contract_app_metadata(&msg.app_metadata)?;
+    let required_attributes = validate_ldt_marker_policy(
+        msg.marker_type,
+        msg.allow_forced_transfer,
+        &msg.required_attributes,
+    )?;
 
     // An address-shaped LDT denom would resolve a different marker on every denom-keyed lookup,
     // making mint and burn permanently unreachable. Reject it before the marker is created.
@@ -34,7 +39,7 @@ pub fn instantiate_contract(
             app_metadata: msg.app_metadata,
             marker_type: msg.marker_type,
             allow_forced_transfer: msg.allow_forced_transfer,
-            required_attributes: msg.required_attributes.clone(),
+            required_attributes: required_attributes.clone(),
         },
     )?;
 
@@ -74,7 +79,7 @@ pub fn instantiate_contract(
         marker_type,
         true,
         msg.allow_forced_transfer,
-        msg.required_attributes,
+        required_attributes,
     );
 
     Ok(Response::new()
@@ -243,5 +248,69 @@ mod tests {
             cfg.required_attributes,
             vec!["loan-dicer.pi-holder".to_string()]
         );
+    }
+
+    #[test]
+    fn rejects_forced_transfer_on_coin_marker() {
+        let mut deps = mock_provenance_dependencies();
+        let mut msg = base_msg(deps.api);
+        msg.allow_forced_transfer = true;
+
+        let err = instantiate_contract(deps.as_mut(), mock_env(), msg).unwrap_err();
+        assert!(matches!(
+            err,
+            ContractError::InvalidLdtMarkerPolicy(ref reason)
+                if reason.contains("allow_forced_transfer")
+        ));
+        assert!(CONFIGURATION.may_load(&deps.storage).unwrap().is_none());
+    }
+
+    #[test]
+    fn rejects_required_attributes_on_coin_marker() {
+        let mut deps = mock_provenance_dependencies();
+        let mut msg = base_msg(deps.api);
+        msg.required_attributes = vec!["loan-dicer.pi-holder".to_string()];
+
+        let err = instantiate_contract(deps.as_mut(), mock_env(), msg).unwrap_err();
+        assert!(matches!(
+            err,
+            ContractError::InvalidLdtMarkerPolicy(ref reason)
+                if reason.contains("required_attributes")
+        ));
+        assert!(CONFIGURATION.may_load(&deps.storage).unwrap().is_none());
+    }
+
+    #[test]
+    fn rejects_duplicate_required_attributes() {
+        let mut deps = mock_provenance_dependencies();
+        let mut msg = base_msg(deps.api);
+        msg.marker_type = LdtMarkerType::Restricted;
+        msg.required_attributes = vec![
+            "loan-dicer.pi-holder".to_string(),
+            "loan-dicer.pi-holder".to_string(),
+        ];
+
+        let err = instantiate_contract(deps.as_mut(), mock_env(), msg).unwrap_err();
+        assert!(matches!(
+            err,
+            ContractError::InvalidLdtMarkerPolicy(ref reason)
+                if reason.contains("duplicate") && reason.contains("loan-dicer.pi-holder")
+        ));
+        assert!(CONFIGURATION.may_load(&deps.storage).unwrap().is_none());
+    }
+
+    #[test]
+    fn rejects_invalid_required_attribute() {
+        let mut deps = mock_provenance_dependencies();
+        let mut msg = base_msg(deps.api);
+        msg.marker_type = LdtMarkerType::Restricted;
+        msg.required_attributes = vec!["kyc.*.example".to_string()];
+
+        let err = instantiate_contract(deps.as_mut(), mock_env(), msg).unwrap_err();
+        assert!(matches!(
+            err,
+            ContractError::InvalidLdtMarkerPolicy(ref reason) if reason.contains("kyc.*.example")
+        ));
+        assert!(CONFIGURATION.may_load(&deps.storage).unwrap().is_none());
     }
 }
