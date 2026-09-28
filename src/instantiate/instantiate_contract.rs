@@ -64,6 +64,12 @@ pub fn instantiate_contract(
     ];
     if marker_type == MarkerType::Restricted {
         permissions.push(Access::Transfer as i32);
+        // ForceTransfer is what pulls PI out of a third-party wallet. It is only meaningful
+        // when the marker allows forced transfer, which cannot be enabled after creation
+        // except by governance.
+        if msg.allow_forced_transfer {
+            permissions.push(Access::ForceTransfer as i32);
+        }
     }
 
     let ldt_marker_messages = create_marker_messages(
@@ -238,6 +244,7 @@ mod tests {
                 Access::Burn as i32,
                 Access::Withdraw as i32,
                 Access::Transfer as i32,
+                Access::ForceTransfer as i32,
             ]
         );
 
@@ -247,6 +254,29 @@ mod tests {
         assert_eq!(
             cfg.required_attributes,
             vec!["loan-dicer.pi-holder".to_string()]
+        );
+    }
+
+    #[test]
+    fn restricted_marker_without_forced_transfer_does_not_grant_force_transfer() {
+        let mut deps = mock_provenance_dependencies();
+        let env = mock_env();
+        let mut msg = base_msg(deps.api);
+        msg.marker_type = LdtMarkerType::Restricted;
+
+        let res = instantiate_contract(deps.as_mut(), env, msg).unwrap();
+
+        let created: Vec<MsgAddMarkerRequest> = typed_msgs(&res, MsgAddMarkerRequest::TYPE_URL);
+        assert!(!created[0].allow_forced_transfer);
+        assert_eq!(
+            created[0].access_list[0].permissions,
+            vec![
+                Access::Admin as i32,
+                Access::Mint as i32,
+                Access::Burn as i32,
+                Access::Withdraw as i32,
+                Access::Transfer as i32,
+            ]
         );
     }
 

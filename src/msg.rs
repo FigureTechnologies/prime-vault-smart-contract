@@ -24,8 +24,8 @@ pub struct InstantiateContractMsg {
     /// Type of the LDT marker. This cannot be changed after the marker is created.
     #[serde(default)]
     pub marker_type: LdtMarkerType,
-    /// Permit addresses with marker transfer access to force-transfer LDT.
-    /// Only valid when `marker_type` is restricted.
+    /// Permit this contract to force-transfer LDT out of holder wallets. Grants
+    /// `Access::ForceTransfer` on the marker. Only valid when `marker_type` is restricted.
     #[serde(default)]
     pub allow_forced_transfer: bool,
     /// Attributes required to transfer LDT without marker transfer access.

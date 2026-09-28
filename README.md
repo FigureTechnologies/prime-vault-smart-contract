@@ -43,8 +43,9 @@ compatibility and default to `"coin"`, `false`, and `[]`, respectively. `allow_f
 and `required_attributes` are only valid when `marker_type` is `"restricted"`. Attribute names
 must be unique Provenance names (lowercase segments; a leading `*.` wildcard is allowed).
 `marker_type` is immutable after marker creation, while changing `allow_forced_transfer` later
-requires governance. A restricted marker grants the contract `Transfer` access in addition to
-`Admin`, `Mint`, `Burn`, and `Withdraw`.
+requires governance. A restricted marker grants the contract `Transfer` in addition to `Admin`,
+`Mint`, `Burn`, and `Withdraw`. When `allow_forced_transfer` is true it also grants
+`ForceTransfer`, which is required to pull PI out of a holder wallet.
 
 (`app_metadata` is optional; when set, `kind` is limited to 64 characters and `data` to 1024.)
 
