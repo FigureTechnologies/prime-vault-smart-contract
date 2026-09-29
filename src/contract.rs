@@ -11,6 +11,7 @@ use crate::execute::redemption::complete_redemption_pool::execute_complete_redem
 use crate::execute::redemption::confirm_redemption::execute_confirm_redemption;
 use crate::execute::redemption::initiate_redemption::execute_initiate_redemption;
 use crate::execute::redemption::pool_redemption::execute_pool_redemption;
+use crate::execute::settlement::settle_collection::execute_settle_collection;
 use crate::execute::swap::cancel_swap::execute_cancel_swap;
 use crate::execute::swap::complete_swap_pool::execute_complete_swap_pool;
 use crate::execute::swap::confirm_swap::execute_confirm_swap;
@@ -25,6 +26,7 @@ use crate::query::query_contribution::query_pending_contribution;
 use crate::query::query_contribution::query_pending_contribution_by_reference;
 use crate::query::query_redemption::query_pending_redemption;
 use crate::query::query_redemption::query_pending_redemption_by_reference;
+use crate::query::query_settlement::query_settlement;
 use crate::query::query_swap::query_pending_swap;
 use crate::query::query_swap::query_pending_swap_by_reference;
 use cosmwasm_std::{
@@ -139,6 +141,10 @@ pub fn execute(
         } => execute_submit_swap(deps, env, info, swap_id, incoming_marker_denom),
         ExecuteMsg::ConfirmSwap { swap_id } => execute_confirm_swap(deps, env, info, swap_id),
         ExecuteMsg::CancelSwap { swap_id } => execute_cancel_swap(deps, env, info, swap_id),
+        ExecuteMsg::SettleCollection {
+            settlement_ref,
+            clawbacks,
+        } => execute_settle_collection(deps, env, info, settlement_ref, clawbacks),
     }
 }
 
@@ -164,5 +170,8 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> Result<Binary, ContractErr
             &query_pending_swap_by_reference(deps, swap_ref)?,
         )?),
         QueryMsg::GetConfiguration {} => Ok(to_json_binary(&query_configuration(deps)?)?),
+        QueryMsg::GetSettlement { settlement_ref } => {
+            Ok(to_json_binary(&query_settlement(deps, settlement_ref)?)?)
+        }
     }
 }

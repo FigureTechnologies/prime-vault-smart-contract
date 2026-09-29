@@ -305,6 +305,26 @@ pub enum ContractError {
     #[error("Missing burn amount for redemption")]
     MissingBurnAmount,
 
+    /// Occurs when the SettleCollection clawback list is empty, has a zero amount, or repeats a holder
+    #[error("Invalid clawbacks: {0}")]
+    InvalidClawbacks(String),
+
+    /// Occurs when a settlement reference was already completed
+    #[error("Settlement {settlement_ref} has already completed")]
+    SettlementAlreadyCompleted { settlement_ref: String },
+
+    /// Occurs when a settlement reference is not found
+    #[error("Settlement {settlement_ref} not found")]
+    SettlementNotFound { settlement_ref: String },
+
+    /// Occurs when the PI marker does not allow forced transfer, so holder balances cannot be pulled
+    #[error("PI marker does not allow forced transfer")]
+    PiMarkerForcedTransferDisabled,
+
+    /// Occurs when the contract is missing a permission required to claw back and burn PI
+    #[error("Contract does not hold {permission} on the PI marker")]
+    MissingMarkerPermission { permission: &'static str },
+
     /// Occurs when LDT marker instantiate settings are invalid (type, forced transfer, attributes)
     #[error("Invalid LDT marker policy: {0}")]
     InvalidLdtMarkerPolicy(String),

@@ -71,6 +71,7 @@ On instantiation, the contract stores configuration and creates the LDT marker w
 - `SubmitSwap { swap_id, incoming_marker_denom }` — contributor must attach `burn_ldt_amount` LDT when burn is set
 - `ConfirmSwap { swap_id }`
 - `CancelSwap { swap_id }`
+- `SettleCollection { settlement_ref, clawbacks }` — OTC only. Force-transfers each `pi_amount` of PI from `holder_address` onto the PI marker, then burns the sum. `settlement_ref` is an idempotency key (`GetSettlement` reports a completed run). The marker must be restricted with forced transfer enabled, and the contract must hold `ForceTransfer` and `Burn`. Attached funds are rejected. This does not move scopes and does not repay Demo Prime loans.
 
 See `src/msg.rs` for full schema and docs.
 
@@ -120,6 +121,7 @@ Once the pending maps are confirmed empty, migrate also clears the `PENDING_DENO
 - `GetPendingSwap { swap_id }` — `{ swap_id, pool_denom, pooling_complete, contributor_addr, mint_ldt_amount, burn_ldt_amount, incoming_marker_denom }`
 - `GetPendingSwapByReference { swap_ref }`
 - `GetConfiguration {}` — includes `app_metadata` when set at instantiate
+- `GetSettlement { settlement_ref }` — `{ settlement_ref, total_pi_burned, holder_count }` for a completed `SettleCollection`. Missing references error. Holder addresses are not stored.
 
 ## Build
 

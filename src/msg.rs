@@ -1,4 +1,5 @@
 use cosmwasm_schema::QueryResponses;
+use cosmwasm_std::Uint128;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -221,6 +222,28 @@ pub enum ExecuteMsg {
         /// The ID of the swap to be canceled
         swap_id: u64,
     },
+    /// OTC-only. Pull PI from the given holder wallets onto the PI marker and burn the sum.
+    ///
+    /// Used when cash is collected against underlying assets. The caller supplies the
+    /// per-holder amounts calculated by the settlement workflow.
+    ///
+    /// Does not move scopes and does not accept attached funds.
+    SettleCollection {
+        /// Idempotency key for the settlement run. Leading and trailing whitespace is
+        /// ignored, and a completed reference cannot be reused.
+        settlement_ref: String,
+        /// PI to force-transfer from each holder to the marker. Must be non-empty, with unique
+        /// holders and positive amounts.
+        clawbacks: Vec<PiClawback>,
+    },
+}
+
+/// One holder's PI to pull onto the marker and burn during `SettleCollection`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct PiClawback {
+    pub holder_address: String,
+    /// Base units of the PI denom.
+    pub pi_amount: Uint128,
 }
 /// All defined payloads to be used when querying routes on this contract instance.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema, QueryResponses)]
@@ -252,6 +275,10 @@ pub enum QueryMsg {
     /// A route to query the contract configuration details.
     #[returns(crate::state::Configuration)]
     GetConfiguration {},
+
+    /// Whether a collection settlement reference has already completed.
+    #[returns(GetSettlementResponse)]
+    GetSettlement { settlement_ref: String },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
@@ -284,6 +311,13 @@ pub struct GetSwapResponse {
     /// Incoming marker denom once the contributor has submitted. `ConfirmSwap` requires this
     /// alongside `pooling_complete`; `None` means submit has not happened yet.
     pub incoming_marker_denom: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+pub struct GetSettlementResponse {
+    pub settlement_ref: String,
+    pub total_pi_burned: Uint128,
+    pub holder_count: u32,
 }
 
 #[cfg(test)]
