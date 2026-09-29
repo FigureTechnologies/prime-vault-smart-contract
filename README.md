@@ -45,7 +45,9 @@ must be unique Provenance names (lowercase segments; a leading `*.` wildcard is 
 `marker_type` is immutable after marker creation, while changing `allow_forced_transfer` later
 requires governance. A restricted marker grants the contract `Transfer` in addition to `Admin`,
 `Mint`, `Burn`, and `Withdraw`. When `allow_forced_transfer` is true it also grants
-`ForceTransfer`, which is required to pull PI out of a holder wallet.
+`ForceTransfer`, which is required to pull PI out of a holder wallet. Redemption, and a swap
+whose terms burn PI, are rejected on a restricted marker: both collect the burn as a bank send
+from the holder, which a restricted marker does not allow. A mint-only swap is unchanged.
 
 (`app_metadata` is optional; when set, `kind` is limited to 64 characters and `data` to 1024.)
 

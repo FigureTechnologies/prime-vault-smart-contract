@@ -71,6 +71,11 @@ pub enum ContractError {
     #[error("Marker must be Restricted type to escrow, found type {marker_type}")]
     MarkerNotRestricted { marker_type: i32 },
 
+    /// Occurs when a redemption or a swap burn tries to take PI from a holder by bank send.
+    /// A restricted marker rejects that send, so the route is refused before any record is written.
+    #[error("Holder-funded PI burn is not supported when the PI marker is restricted")]
+    RestrictedMarkerHolderBurnNotSupported,
+
     /// Occurs when UpdateConfiguration is called without naming any field to change
     #[error("UpdateConfiguration requires at least one field to update")]
     EmptyConfigurationUpdate,

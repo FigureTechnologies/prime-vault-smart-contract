@@ -45,6 +45,15 @@ impl Default for LdtMarkerType {
     }
 }
 
+/// Redemption and swap burns arrive as a bank send from the holder. A restricted PI marker
+/// rejects that send, so those routes are refused instead of creating a record that cannot settle.
+pub fn ensure_holder_funded_pi_burn(marker_type: LdtMarkerType) -> Result<(), ContractError> {
+    if marker_type == LdtMarkerType::Restricted {
+        return Err(ContractError::RestrictedMarkerHolderBurnNotSupported);
+    }
+    Ok(())
+}
+
 pub fn validate_contract_app_metadata(
     metadata: &Option<ContractAppMetadata>,
 ) -> Result<(), ContractError> {

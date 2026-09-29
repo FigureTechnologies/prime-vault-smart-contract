@@ -97,6 +97,15 @@ impl TestCtx {
             .unwrap();
     }
 
+    /// Store a restricted PI marker type. Existing tests keep the default coin marker.
+    pub fn set_restricted_pi_marker(&mut self) {
+        let mut configuration = CONFIGURATION.load(&self.deps.storage).unwrap();
+        configuration.marker_type = LdtMarkerType::Restricted;
+        CONFIGURATION
+            .save(&mut self.deps.storage, &configuration)
+            .unwrap();
+    }
+
     pub fn otc_info(&self) -> MessageInfo {
         message_info(&self.otc, &[])
     }
