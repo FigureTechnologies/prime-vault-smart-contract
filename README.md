@@ -44,8 +44,9 @@ and `required_attributes` are only valid when `marker_type` is `"restricted"`. A
 must be unique Provenance names (lowercase segments; a leading `*.` wildcard is allowed).
 `marker_type` is immutable after marker creation, while changing `allow_forced_transfer` later
 requires governance. A restricted marker grants the contract `Transfer` in addition to `Admin`,
-`Mint`, `Burn`, and `Withdraw`. When `allow_forced_transfer` is true it also grants
-`ForceTransfer`, which is required to pull PI out of a holder wallet. Redemption, and a swap
+`Mint`, `Burn`, and `Withdraw`, plus `Deposit` so holder PI can be transferred onto the marker
+before it is burned. When `allow_forced_transfer` is true it also grants `ForceTransfer`, which
+is required to pull PI out of a holder wallet. Redemption, and a swap
 whose terms burn PI, are rejected on a restricted marker: both collect the burn as a bank send
 from the holder, which a restricted marker does not allow. A mint-only swap is unchanged.
 
@@ -73,7 +74,7 @@ On instantiation, the contract stores configuration and creates the LDT marker w
 - `SubmitSwap { swap_id, incoming_marker_denom }` — contributor must attach `burn_ldt_amount` LDT when burn is set
 - `ConfirmSwap { swap_id }`
 - `CancelSwap { swap_id }`
-- `SettleCollection { settlement_ref, clawbacks }` — OTC only. Force-transfers each `pi_amount` of PI from `holder_address` onto the PI marker, then burns the sum. `settlement_ref` is an idempotency key (`GetSettlement` reports a completed run). The marker must be restricted with forced transfer enabled, and the contract must hold `ForceTransfer` and `Burn`. Attached funds are rejected. This does not move scopes and does not repay Demo Prime loans.
+- `SettleCollection { settlement_ref, clawbacks }` — OTC only. Force-transfers each `pi_amount` of PI from `holder_address` onto the PI marker, then burns the sum. `settlement_ref` is an idempotency key (`GetSettlement` reports a completed run). The marker must be restricted with forced transfer enabled, and the contract must hold `ForceTransfer`, `Burn`, and `Deposit`. Attached funds are rejected. This does not move scopes and does not repay Demo Prime loans.
 
 See `src/msg.rs` for full schema and docs.
 

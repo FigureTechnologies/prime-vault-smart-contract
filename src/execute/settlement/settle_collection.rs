@@ -76,6 +76,8 @@ pub fn execute_settle_collection(
     let contract = env.contract.address.to_string();
     require_permission(&marker.access_control, &contract, Access::ForceTransfer)?;
     require_permission(&marker.access_control, &contract, Access::Burn)?;
+    // The transfer lands on the marker account, which the keeper treats as a deposit.
+    require_permission(&marker.access_control, &contract, Access::Deposit)?;
     let marker_address = marker
         .base_account
         .ok_or_else(|| {
@@ -168,7 +170,11 @@ mod tests {
     fn ready_marker(ctx: &mut TestCtx) {
         seed_pi_marker(
             ctx,
-            vec![Access::ForceTransfer as i32, Access::Burn as i32],
+            vec![
+                Access::ForceTransfer as i32,
+                Access::Burn as i32,
+                Access::Deposit as i32,
+            ],
             true,
         );
     }
@@ -374,7 +380,11 @@ mod tests {
         let mut ctx = TestCtx::new();
         seed_pi_marker(
             &mut ctx,
-            vec![Access::ForceTransfer as i32, Access::Burn as i32],
+            vec![
+                Access::ForceTransfer as i32,
+                Access::Burn as i32,
+                Access::Deposit as i32,
+            ],
             false,
         );
         let holder = ctx.contributor.to_string();
@@ -383,7 +393,11 @@ mod tests {
         assert!(matches!(err, ContractError::PiMarkerForcedTransferDisabled));
 
         let mut ctx = TestCtx::new();
-        seed_pi_marker(&mut ctx, vec![Access::Burn as i32], true);
+        seed_pi_marker(
+            &mut ctx,
+            vec![Access::Burn as i32, Access::Deposit as i32],
+            true,
+        );
         let holder = ctx.contributor.to_string();
         let info = ctx.otc_info();
         let err = settle(&mut ctx, info, "no-grant", vec![clawback(&holder, 10)]).unwrap_err();
@@ -395,7 +409,11 @@ mod tests {
         ));
 
         let mut ctx = TestCtx::new();
-        seed_pi_marker(&mut ctx, vec![Access::ForceTransfer as i32], true);
+        seed_pi_marker(
+            &mut ctx,
+            vec![Access::ForceTransfer as i32, Access::Deposit as i32],
+            true,
+        );
         let holder = ctx.contributor.to_string();
         let info = ctx.otc_info();
         let err = settle(&mut ctx, info, "no-burn", vec![clawback(&holder, 10)]).unwrap_err();
@@ -403,6 +421,22 @@ mod tests {
             err,
             ContractError::MissingMarkerPermission {
                 permission: "ACCESS_BURN"
+            }
+        ));
+
+        let mut ctx = TestCtx::new();
+        seed_pi_marker(
+            &mut ctx,
+            vec![Access::ForceTransfer as i32, Access::Burn as i32],
+            true,
+        );
+        let holder = ctx.contributor.to_string();
+        let info = ctx.otc_info();
+        let err = settle(&mut ctx, info, "no-deposit", vec![clawback(&holder, 10)]).unwrap_err();
+        assert!(matches!(
+            err,
+            ContractError::MissingMarkerPermission {
+                permission: "ACCESS_DEPOSIT"
             }
         ));
     }

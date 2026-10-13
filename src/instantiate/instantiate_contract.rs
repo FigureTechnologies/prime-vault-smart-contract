@@ -64,6 +64,9 @@ pub fn instantiate_contract(
     ];
     if marker_type == MarkerType::Restricted {
         permissions.push(Access::Transfer as i32);
+        // A transfer onto this marker account is a deposit. Clawback sends holder PI here
+        // before burning it, and the marker keeper rejects that destination without Deposit.
+        permissions.push(Access::Deposit as i32);
         // ForceTransfer is what pulls PI out of a third-party wallet. It is only meaningful
         // when the marker allows forced transfer, which cannot be enabled after creation
         // except by governance.
@@ -244,6 +247,7 @@ mod tests {
                 Access::Burn as i32,
                 Access::Withdraw as i32,
                 Access::Transfer as i32,
+                Access::Deposit as i32,
                 Access::ForceTransfer as i32,
             ]
         );
@@ -276,6 +280,7 @@ mod tests {
                 Access::Burn as i32,
                 Access::Withdraw as i32,
                 Access::Transfer as i32,
+                Access::Deposit as i32,
             ]
         );
     }
