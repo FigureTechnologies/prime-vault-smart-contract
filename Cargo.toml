@@ -1,6 +1,6 @@
 [package]
 name = "loan-dicer"
-version = "1.0.0"
+version = "1.1.0-rc1"
 authors = ["Jordon Tolotti <jtolotti@figure.com>"]
 edition = "2021"
 
