@@ -7,11 +7,14 @@ use crate::state::{
 use cosmwasm_std::{DepsMut, Env, Order, Response, StdResult, Storage};
 use cw2::{get_contract_version, set_contract_version};
 use cw_storage_plus::Map;
+use semver::Version;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-/// Stored contract version that may migrate onto this code, besides the current version.
-pub const PREVIOUS_CONTRACT_VERSION: &str = "0.3.0";
+/// Oldest stored contract version that may migrate onto this code. Any version from here up to
+/// and including the current version is accepted, so a release needs no change here unless it
+/// alters storage in a way older versions cannot be migrated from.
+pub const MIN_MIGRATE_VERSION: &str = "0.3.0";
 
 pub fn migrate_contract(
     deps: DepsMut,
@@ -27,11 +30,7 @@ pub fn migrate_contract(
         });
     }
 
-    if stored.version != PREVIOUS_CONTRACT_VERSION && stored.version != CONTRACT_VERSION {
-        return Err(ContractError::CannotMigrateFromVersion {
-            version: stored.version,
-        });
-    }
+    ensure_migratable_version(&stored.version, CONTRACT_VERSION)?;
 
     // Check for any pending contributions, redemptions, or swaps before proceeding with the migration
     let contributions = pending_key_count(deps.storage, PENDING_CONTRIBUTIONS)?;
@@ -59,6 +58,21 @@ pub fn migrate_contract(
         .add_attribute("previous_version", stored.version)
         .add_attribute("new_version", CONTRACT_VERSION)
         .add_attribute("cleared_pending_denoms", cleared_pending_denoms.to_string()))
+}
+
+/// Accepts `MIN_MIGRATE_VERSION <= stored <= current` under semver ordering, so pre-releases sort
+/// before their release (`1.1.0-rc1 < 1.1.0`). Rejects downgrades and unparseable versions.
+fn ensure_migratable_version(stored: &str, current: &str) -> Result<(), ContractError> {
+    let reject = || ContractError::CannotMigrateFromVersion {
+        version: stored.to_string(),
+    };
+    let stored_version = Version::parse(stored).map_err(|_| reject())?;
+    let min_version = Version::parse(MIN_MIGRATE_VERSION).map_err(|_| reject())?;
+    let current_version = Version::parse(current).map_err(|_| reject())?;
+    if stored_version < min_version || stored_version > current_version {
+        return Err(reject());
+    }
+    Ok(())
 }
 
 fn clear_pending_denoms(storage: &mut dyn Storage) -> StdResult<u32> {
@@ -109,12 +123,7 @@ mod tests {
             },
         )
         .unwrap();
-        set_contract_version(
-            &mut ctx.deps.storage,
-            CONTRACT_NAME,
-            PREVIOUS_CONTRACT_VERSION,
-        )
-        .unwrap();
+        set_contract_version(&mut ctx.deps.storage, CONTRACT_NAME, MIN_MIGRATE_VERSION).unwrap();
     }
 
     fn dummy_contribution(ctx: &TestCtx) -> PendingContribution {
@@ -254,17 +263,80 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_version() {
+    fn rejects_downgrade() {
         let mut ctx = TestCtx::new();
         seed_v0_3_contract(&mut ctx);
-        set_contract_version(&mut ctx.deps.storage, CONTRACT_NAME, "0.4.0").unwrap();
+        set_contract_version(&mut ctx.deps.storage, CONTRACT_NAME, "99.0.0").unwrap();
 
         let err = migrate_contract(ctx.deps.as_mut(), ctx.env.clone(), MigrateMsg::default())
             .unwrap_err();
         assert!(matches!(
             err,
-            ContractError::CannotMigrateFromVersion { version } if version == "0.4.0"
+            ContractError::CannotMigrateFromVersion { version } if version == "99.0.0"
         ));
+    }
+
+    #[test]
+    fn rejects_non_semver_version() {
+        let mut ctx = TestCtx::new();
+        seed_v0_3_contract(&mut ctx);
+        set_contract_version(&mut ctx.deps.storage, CONTRACT_NAME, "v1").unwrap();
+
+        let err = migrate_contract(ctx.deps.as_mut(), ctx.env.clone(), MigrateMsg::default())
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ContractError::CannotMigrateFromVersion { version } if version == "v1"
+        ));
+    }
+
+    #[test]
+    fn accepts_any_version_from_the_minimum_up_to_current() {
+        for (stored, current) in [
+            ("0.3.0", "1.1.0-rc1"),
+            ("0.3.1", "1.0.0"),
+            ("1.0.0", "1.1.0-rc1"),
+            ("1.1.0-rc1", "1.1.0-rc2"),
+            ("1.1.0-rc1", "1.1.0"),
+            ("1.1.0", "1.1.0"),
+        ] {
+            assert!(
+                ensure_migratable_version(stored, current).is_ok(),
+                "expected {stored} -> {current} to be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_versions_outside_the_range() {
+        for (stored, current) in [
+            ("0.2.9", "1.1.0"),
+            ("0.3.0-rc1", "1.1.0"),
+            ("1.1.0", "1.1.0-rc1"),
+            ("1.1.0-rc2", "1.1.0-rc1"),
+            ("1.2.0", "1.1.0"),
+            ("1.0", "1.1.0"),
+        ] {
+            assert!(
+                matches!(
+                    ensure_migratable_version(stored, current),
+                    Err(ContractError::CannotMigrateFromVersion { ref version }) if version == stored
+                ),
+                "expected {stored} -> {current} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn migrates_from_an_intermediate_version() {
+        let mut ctx = TestCtx::new();
+        seed_v0_3_contract(&mut ctx);
+        set_contract_version(&mut ctx.deps.storage, CONTRACT_NAME, "0.3.1").unwrap();
+
+        migrate_contract(ctx.deps.as_mut(), ctx.env.clone(), MigrateMsg::default()).unwrap();
+
+        let ver = get_contract_version(&ctx.deps.storage).unwrap();
+        assert_eq!(ver.version, CONTRACT_VERSION);
     }
 
     #[test]
@@ -356,7 +428,7 @@ mod tests {
                 .iter()
                 .find(|a| a.key == "previous_version")
                 .map(|a| a.value.as_str()),
-            Some(PREVIOUS_CONTRACT_VERSION)
+            Some(MIN_MIGRATE_VERSION)
         );
         assert_eq!(
             res.attributes
