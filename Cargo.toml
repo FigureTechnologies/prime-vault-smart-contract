@@ -38,6 +38,7 @@ thiserror = { version = "1.0.49" }
 provwasm-std = { version = "2.0.0" }
 uuid = { version = "1.7.0", features = ["v1"] }
 itertools = "0.12"
+semver = "1.0.27"
 
 [dev-dependencies]
 provwasm-common = "0.2.0"
