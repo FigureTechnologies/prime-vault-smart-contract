@@ -111,7 +111,7 @@ After storing upgraded WASM, migrate an existing instance (contract admin only):
 
 Message type: `MigrateMsg`.
 
-From version **0.3.0**, migration requires that there are no pending contributions, redemptions, or swaps (complete or cancel them first) and sets the cw2 contract version to **1.0.0**. Contracts below **0.3.0** cannot migrate with this code. Re-running migrate when already at **1.0.0** is allowed when pending maps are still empty (version is refreshed).
+From version **0.3.0**, migration requires that there are no pending contributions, redemptions, or swaps (complete or cancel them first) and sets the cw2 contract version to **1.1.0-rc1**. Contracts below **0.3.0** cannot migrate with this code. Re-running migrate when already at **1.1.0-rc1** is allowed when pending maps are still empty (version is refreshed).
 
 Once the pending maps are confirmed empty, migrate also clears the `PENDING_DENOMS` reverse index, since any entry left there is stale by definition. The number removed is reported in the `cleared_pending_denoms` attribute — a non-zero value means a denom had leaked and would otherwise have stayed fenced off permanently, so it is worth investigating even though the migration repairs it.
 
