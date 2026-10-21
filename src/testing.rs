@@ -16,7 +16,7 @@ use provwasm_std::types::provenance::marker::v1::{
 };
 use provwasm_std::types::tendermint::abci::ResponseQuery;
 
-use crate::state::{Configuration, CONFIGURATION};
+use crate::state::{Configuration, LdtMarkerType, CONFIGURATION};
 
 pub const LDT_DENOM: &str = "ldt.token.test";
 pub const MARKER_DENOM: &str = "incoming.marker";
@@ -88,6 +88,9 @@ impl TestCtx {
                     ldt_denom: LDT_DENOM.to_string(),
                     redemption_marker_admin: self.redemption_admin.clone(),
                     app_metadata: None,
+                    marker_type: LdtMarkerType::default(),
+                    allow_forced_transfer: false,
+                    required_attributes: vec![],
                 },
             )
             .unwrap();

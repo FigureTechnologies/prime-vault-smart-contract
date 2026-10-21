@@ -31,9 +31,21 @@ Message: `InstantiateContractMsg`
   "otc_address": "...",
   "ldt_denom": "...",
   "redemption_marker_admin": "...",
-  "app_metadata": null
+  "app_metadata": null,
+  "marker_type": "restricted",
+  "allow_forced_transfer": true,
+  "required_attributes": ["loan-dicer.pi-holder"]
 }
 ```
+
+`marker_type`, `allow_forced_transfer`, and `required_attributes` are optional for backward
+compatibility and default to `"coin"`, `false`, and `[]`, respectively. `allow_forced_transfer`
+and `required_attributes` are only valid when `marker_type` is `"restricted"`. Attribute names
+must be unique Provenance names (lowercase segments; a leading `*.` wildcard is allowed).
+`marker_type` is immutable after marker creation, while changing `allow_forced_transfer` later
+requires governance. A restricted marker grants the contract `Transfer` in addition to `Admin`,
+`Mint`, `Burn`, and `Withdraw`. When `allow_forced_transfer` is true it also grants
+`ForceTransfer`, which is required to pull PI out of a holder wallet.
 
 (`app_metadata` is optional; when set, `kind` is limited to 64 characters and `data` to 1024.)
 

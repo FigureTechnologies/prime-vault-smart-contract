@@ -83,6 +83,8 @@ pub fn create_marker_messages(
     access_grants: Vec<AccessGrant>,
     marker_type: MarkerType,
     allow_governance_control: bool,
+    allow_forced_transfer: bool,
+    required_attributes: Vec<String>,
 ) -> Vec<CosmosMsg> {
     vec![
         CosmosMsg::from(MsgAddMarkerRequest {
@@ -94,8 +96,8 @@ pub fn create_marker_messages(
             access_list: access_grants,
             supply_fixed: false,
             allow_governance_control,
-            allow_forced_transfer: false,
-            required_attributes: vec![],
+            allow_forced_transfer,
+            required_attributes,
             usd_cents: 0,
             volume: 0,
             usd_mills: 0,

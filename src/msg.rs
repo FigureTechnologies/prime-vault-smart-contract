@@ -2,7 +2,7 @@ use cosmwasm_schema::QueryResponses;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::state::ContractAppMetadata;
+use crate::state::{ContractAppMetadata, LdtMarkerType};
 
 /// Message sent when upgrading this contract instance to new code via `MsgMigrateContract`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema, Default)]
@@ -21,6 +21,17 @@ pub struct InstantiateContractMsg {
     /// Optional app-defined metadata for this contract instance; not interpreted semantically by the contract.
     #[serde(default)]
     pub app_metadata: Option<ContractAppMetadata>,
+    /// Type of the LDT marker. This cannot be changed after the marker is created.
+    #[serde(default)]
+    pub marker_type: LdtMarkerType,
+    /// Permit this contract to force-transfer LDT out of holder wallets. Grants
+    /// `Access::ForceTransfer` on the marker. Only valid when `marker_type` is restricted.
+    #[serde(default)]
+    pub allow_forced_transfer: bool,
+    /// Attributes required to transfer LDT without marker transfer access.
+    /// Only valid when `marker_type` is restricted; names must be unique and well-formed.
+    #[serde(default)]
+    pub required_attributes: Vec<String>,
 }
 
 /// All defined payloads to be used when executing routes on this contract instance.
@@ -273,4 +284,26 @@ pub struct GetSwapResponse {
     /// Incoming marker denom once the contributor has submitted. `ConfirmSwap` requires this
     /// alongside `pooling_complete`; `None` means submit has not happened yet.
     pub incoming_marker_denom: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmwasm_std::from_json;
+
+    #[test]
+    fn instantiate_marker_settings_default_to_legacy_behavior() {
+        let msg: InstantiateContractMsg = from_json(
+            br#"{
+                "otc_address":"otc",
+                "ldt_denom":"ldt",
+                "redemption_marker_admin":"admin"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(msg.marker_type, LdtMarkerType::Coin);
+        assert!(!msg.allow_forced_transfer);
+        assert!(msg.required_attributes.is_empty());
+    }
 }
