@@ -1,4 +1,5 @@
 pub mod query_config;
 pub mod query_contribution;
 pub mod query_redemption;
+pub mod query_settlement;
 pub mod query_swap;

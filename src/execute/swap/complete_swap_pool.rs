@@ -1,7 +1,7 @@
 use crate::{
     error::ContractError,
     execute::assert_no_funds,
-    state::{CONFIGURATION, PENDING_SWAPS},
+    state::{ensure_holder_funded_pi_burn, CONFIGURATION, PENDING_SWAPS},
 };
 use cosmwasm_std::{DepsMut, MessageInfo, Response};
 
@@ -40,6 +40,12 @@ pub fn execute_complete_swap_pool(
     }
     if swap.incoming_marker_denom.is_some() {
         return Err(ContractError::SwapIncomingDenomAlreadySet);
+    }
+
+    // A burn is paid by the contributor as attached funds on SubmitSwap. A restricted PI marker
+    // rejects that send, so refuse the terms before they are published. Mint-only swaps stay allowed.
+    if burn_ldt_amount > 0 {
+        ensure_holder_funded_pi_burn(configuration.marker_type)?;
     }
 
     // Mark the swap as complete and record the mint and burn amounts
@@ -107,6 +113,29 @@ mod tests {
         assert!(swap.pooling_complete);
         assert_eq!(swap.mint_ldt_amount, 0);
         assert_eq!(swap.burn_ldt_amount, 40);
+    }
+
+    #[test]
+    fn rejects_burn_when_pi_marker_is_restricted_and_allows_mint() {
+        let mut ctx = TestCtx::new();
+        ctx.set_restricted_pi_marker();
+        seed_swap(&mut ctx, None);
+
+        let otc_info = ctx.otc_info();
+        let err = execute_complete_swap_pool(ctx.deps.as_mut(), otc_info, 0, 0, 40).unwrap_err();
+        assert!(matches!(
+            err,
+            ContractError::RestrictedMarkerHolderBurnNotSupported
+        ));
+        let swap = PENDING_SWAPS.load(&ctx.deps.storage, 0).unwrap();
+        assert!(!swap.pooling_complete);
+
+        let otc_info = ctx.otc_info();
+        execute_complete_swap_pool(ctx.deps.as_mut(), otc_info, 0, 80, 0).unwrap();
+        let swap = PENDING_SWAPS.load(&ctx.deps.storage, 0).unwrap();
+        assert!(swap.pooling_complete);
+        assert_eq!(swap.mint_ldt_amount, 80);
+        assert_eq!(swap.burn_ldt_amount, 0);
     }
 
     #[test]

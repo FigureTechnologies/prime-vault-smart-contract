@@ -1,7 +1,10 @@
 use crate::{
     error::ContractError,
     pending::register_pending_denom,
-    state::{PendingDenomOwner, StoredAccessGrant, CONFIGURATION, PENDING_SWAPS},
+    state::{
+        ensure_holder_funded_pi_burn, PendingDenomOwner, StoredAccessGrant, CONFIGURATION,
+        PENDING_SWAPS,
+    },
     util::{
         msg_grant_contract_custody, require_active_restricted_marker, require_marker_permissions,
         resolve_marker_holding,
@@ -41,6 +44,9 @@ pub fn execute_submit_swap(
 
     // Check if we are burning tokens for this swap
     if swap.burn_ldt_amount > 0 {
+        // The burn arrives as attached funds. A restricted PI marker rejects that send.
+        ensure_holder_funded_pi_burn(configuration.marker_type)?;
+
         // Only one coin should have been sent
         if info.funds.len() != 1 {
             return Err(ContractError::InvalidFundsSent);
@@ -205,6 +211,30 @@ mod tests {
                 },
             )
             .unwrap();
+    }
+
+    #[test]
+    fn rejects_burn_submit_when_pi_marker_is_restricted() {
+        let mut ctx = TestCtx::new();
+        seed_swap(&mut ctx, true, 40, None);
+        ctx.set_restricted_pi_marker();
+
+        let env = ctx.env.clone();
+        let info = ctx.contributor_info();
+        let err = execute_submit_swap(
+            ctx.deps.as_mut(),
+            env,
+            info,
+            0,
+            "incoming.marker".to_string(),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            ContractError::RestrictedMarkerHolderBurnNotSupported
+        ));
+        let swap = PENDING_SWAPS.load(&ctx.deps.storage, 0).unwrap();
+        assert!(swap.incoming_marker_denom.is_none());
     }
 
     fn contributor_held_incoming(ctx: &mut TestCtx) {

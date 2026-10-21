@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::Addr;
+use cosmwasm_std::{Addr, Uint128};
 use cw2::ContractVersion;
 use cw_storage_plus::{Item, Map};
 use uuid::Uuid;
@@ -17,6 +17,7 @@ pub const MAX_CONTRACT_APP_METADATA_DATA_LEN: usize = 1024;
 pub const MAX_CONTRIBUTION_REF_LEN: usize = 128;
 pub const MAX_REDEMPTION_REF_LEN: usize = 128;
 pub const MAX_SWAP_REF_LEN: usize = 128;
+pub const MAX_SETTLEMENT_REF_LEN: usize = 128;
 
 /// App-defined metadata for this contract instance (not interpreted by the contract).
 #[cw_serde]
@@ -42,6 +43,15 @@ impl Default for LdtMarkerType {
     fn default() -> Self {
         Self::Coin
     }
+}
+
+/// Redemption and swap burns arrive as a bank send from the holder. A restricted PI marker
+/// rejects that send, so those routes are refused instead of creating a record that cannot settle.
+pub fn ensure_holder_funded_pi_burn(marker_type: LdtMarkerType) -> Result<(), ContractError> {
+    if marker_type == LdtMarkerType::Restricted {
+        return Err(ContractError::RestrictedMarkerHolderBurnNotSupported);
+    }
+    Ok(())
 }
 
 pub fn validate_contract_app_metadata(
@@ -226,6 +236,28 @@ pub const CONFIGURATION: Item<Configuration> = Item::new("configuration");
 pub const CONTRIBUTION_REFERENCES: Map<String, u64> = Map::new("contribution_references");
 pub const REDEMPTION_REFERENCES: Map<String, u64> = Map::new("redemption_references");
 pub const SWAP_REFERENCES: Map<String, u64> = Map::new("swap_references");
+/// Completed collection settlements, keyed by the external settlement reference.
+/// Presence is the idempotency record. Holder addresses are not stored.
+pub const SETTLEMENTS: Map<String, CompletedSettlement> = Map::new("settlements");
+
+/// Outcome of a completed `SettleCollection`, returned by `GetSettlement`.
+#[cw_serde]
+pub struct CompletedSettlement {
+    pub total_pi_burned: Uint128,
+    pub holder_count: u32,
+}
+
+/// Trim a settlement reference so `"run-1"` and `" run-1 "` are the same idempotency key.
+pub fn normalize_settlement_ref(settlement_ref: &str) -> Result<String, ContractError> {
+    let settlement_ref = settlement_ref.trim();
+    if settlement_ref.is_empty() {
+        return Err(ContractError::ReferenceEmpty);
+    }
+    if settlement_ref.len() > MAX_SETTLEMENT_REF_LEN {
+        return Err(ContractError::ReferenceTooLong);
+    }
+    Ok(settlement_ref.to_string())
+}
 /// Reverse index of in-flight marker denoms → the pending record that owns them.
 /// Swap `pool_denom` and `incoming_marker_denom`, redemption `pool_denom`, and
 /// contribution `marker_denom` each get an entry for O(1) pooling/cleanup checks.

@@ -71,6 +71,11 @@ pub enum ContractError {
     #[error("Marker must be Restricted type to escrow, found type {marker_type}")]
     MarkerNotRestricted { marker_type: i32 },
 
+    /// Occurs when a redemption or a swap burn tries to take PI from a holder by bank send.
+    /// A restricted marker rejects that send, so the route is refused before any record is written.
+    #[error("Holder-funded PI burn is not supported when the PI marker is restricted")]
+    RestrictedMarkerHolderBurnNotSupported,
+
     /// Occurs when UpdateConfiguration is called without naming any field to change
     #[error("UpdateConfiguration requires at least one field to update")]
     EmptyConfigurationUpdate,
@@ -304,6 +309,26 @@ pub enum ContractError {
     /// Occurs when the burn amount is not specified for a redemption
     #[error("Missing burn amount for redemption")]
     MissingBurnAmount,
+
+    /// Occurs when the SettleCollection clawback list is empty, has a zero amount, or repeats a holder
+    #[error("Invalid clawbacks: {0}")]
+    InvalidClawbacks(String),
+
+    /// Occurs when a settlement reference was already completed
+    #[error("Settlement {settlement_ref} has already completed")]
+    SettlementAlreadyCompleted { settlement_ref: String },
+
+    /// Occurs when a settlement reference is not found
+    #[error("Settlement {settlement_ref} not found")]
+    SettlementNotFound { settlement_ref: String },
+
+    /// Occurs when the PI marker does not allow forced transfer, so holder balances cannot be pulled
+    #[error("PI marker does not allow forced transfer")]
+    PiMarkerForcedTransferDisabled,
+
+    /// Occurs when the contract is missing a permission required to claw back and burn PI
+    #[error("Contract does not hold {permission} on the PI marker")]
+    MissingMarkerPermission { permission: &'static str },
 
     /// Occurs when LDT marker instantiate settings are invalid (type, forced transfer, attributes)
     #[error("Invalid LDT marker policy: {0}")]

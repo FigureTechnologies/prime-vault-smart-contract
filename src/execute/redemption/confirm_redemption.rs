@@ -1,7 +1,9 @@
 use crate::{
     error::ContractError,
     pending::unregister_pending_denom,
-    state::{CONFIGURATION, PENDING_REDEMPTIONS, REDEMPTION_REFERENCES},
+    state::{
+        ensure_holder_funded_pi_burn, CONFIGURATION, PENDING_REDEMPTIONS, REDEMPTION_REFERENCES,
+    },
     util::{get_amount_holding_by_denom, get_marker_by_denom},
 };
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response, Uint128};
@@ -39,6 +41,9 @@ pub fn execute_confirm_redemption(
 
     // Read the contract configuration to get the LDT denom
     let configuration = CONFIGURATION.load(deps.storage)?;
+
+    // The burn arrives as attached funds. A restricted PI marker rejects that send.
+    ensure_holder_funded_pi_burn(configuration.marker_type)?;
 
     // Ensure the sent coin is in the correct denomination
     if coin.denom != configuration.ldt_denom {
@@ -201,6 +206,25 @@ mod tests {
             denom: LDT_DENOM.to_string(),
             amount: Uint128::new(amount),
         }]
+    }
+
+    #[test]
+    fn rejects_confirm_when_pi_marker_is_restricted() {
+        let mut ctx = TestCtx::new();
+        seed_ready_redemption(&mut ctx, true, Some(40));
+        ctx.set_restricted_pi_marker();
+
+        let env = ctx.env.clone();
+        let info = ctx.redeemer_info_with_funds(&ldt_funds(40));
+        let err = execute_confirm_redemption(ctx.deps.as_mut(), env, info, 0).unwrap_err();
+        assert!(matches!(
+            err,
+            ContractError::RestrictedMarkerHolderBurnNotSupported
+        ));
+        assert!(PENDING_REDEMPTIONS
+            .may_load(&ctx.deps.storage, 0)
+            .unwrap()
+            .is_some());
     }
 
     #[test]

@@ -36,6 +36,9 @@ pub mod redemption {
     pub mod initiate_redemption;
     pub mod pool_redemption;
 }
+pub mod settlement {
+    pub mod settle_collection;
+}
 pub mod swap {
     pub mod cancel_swap;
     pub mod complete_swap_pool;

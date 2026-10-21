@@ -52,6 +52,7 @@ pub struct MarkerMock {
     pub access: Vec<AccessGrant>,
     pub status: i32,
     pub marker_type: i32,
+    pub allow_forced_transfer: bool,
 }
 
 impl TestCtx {
@@ -93,6 +94,15 @@ impl TestCtx {
                     required_attributes: vec![],
                 },
             )
+            .unwrap();
+    }
+
+    /// Store a restricted PI marker type. Existing tests keep the default coin marker.
+    pub fn set_restricted_pi_marker(&mut self) {
+        let mut configuration = CONFIGURATION.load(&self.deps.storage).unwrap();
+        configuration.marker_type = LdtMarkerType::Restricted;
+        CONFIGURATION
+            .save(&mut self.deps.storage, &configuration)
             .unwrap();
     }
 
@@ -290,6 +300,7 @@ impl TestCtx {
                 access: vec![],
                 status: MarkerStatus::Active as i32,
                 marker_type: MarkerType::Restricted as i32,
+                allow_forced_transfer: false,
             },
         );
         self.reregister_marker_queries();
@@ -353,8 +364,19 @@ impl TestCtx {
                 access,
                 status: status as i32,
                 marker_type: marker_type as i32,
+                allow_forced_transfer: false,
             },
         );
+        self.reregister_marker_queries();
+    }
+
+    /// Flip the live marker's `allow_forced_transfer` flag. Defaults to false so existing
+    /// unrestricted-marker tests stay unchanged.
+    pub fn set_marker_forced_transfer(&mut self, denom: &str, allow_forced_transfer: bool) {
+        self.markers
+            .get_mut(denom)
+            .unwrap_or_else(|| panic!("no mocked marker for {denom}"))
+            .allow_forced_transfer = allow_forced_transfer;
         self.reregister_marker_queries();
     }
 
@@ -487,7 +509,7 @@ fn marker_account(marker: &MarkerMock) -> MarkerAccount {
         marker_type: marker.marker_type,
         supply_fixed: false,
         allow_governance_control: false,
-        allow_forced_transfer: false,
+        allow_forced_transfer: marker.allow_forced_transfer,
         required_attributes: vec![],
     }
 }

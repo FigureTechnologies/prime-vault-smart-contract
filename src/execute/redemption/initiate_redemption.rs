@@ -3,8 +3,8 @@ use crate::{
     execute::assert_no_funds,
     pending::register_pending_denom,
     state::{
-        PendingDenomOwner, PendingRedemption, CONFIGURATION, MAX_REDEMPTION_REF_LEN,
-        PENDING_REDEMPTIONS, REDEMPTION_COUNTER, REDEMPTION_REFERENCES,
+        ensure_holder_funded_pi_burn, PendingDenomOwner, PendingRedemption, CONFIGURATION,
+        MAX_REDEMPTION_REF_LEN, PENDING_REDEMPTIONS, REDEMPTION_COUNTER, REDEMPTION_REFERENCES,
     },
     util::{create_marker_messages, require_denom_not_address},
 };
@@ -41,6 +41,10 @@ pub fn execute_initiate_redemption(
     if configuration.otc_address != info.sender {
         return Err(ContractError::UnauthorizedOTC);
     }
+
+    // ConfirmRedemption takes the burn as attached funds. A restricted PI marker rejects that
+    // send, so refuse the redemption before a pool marker and pending record are created.
+    ensure_holder_funded_pi_burn(configuration.marker_type)?;
 
     // Marker queries try AccAddressFromBech32 before denom, so an address-shaped pool denom
     // would resolve a different marker and strand this one along with every scope pooled into
@@ -198,6 +202,39 @@ mod tests {
         assert!(created[0].allow_governance_control);
         let withdraws: Vec<MsgWithdrawRequest> = typed_msgs(&res, MsgWithdrawRequest::TYPE_URL);
         assert_eq!(withdraws[0].to_address, ctx.contract_addr());
+    }
+
+    #[test]
+    fn rejects_restricted_pi_marker_before_creating_a_redemption() {
+        let mut ctx = TestCtx::new();
+        ctx.set_restricted_pi_marker();
+
+        let env = ctx.env.clone();
+        let otc_info = ctx.otc_info();
+        let redeemer_addr = ctx.redeemer.to_string();
+        let err = execute_initiate_redemption(
+            ctx.deps.as_mut(),
+            otc_info,
+            env,
+            POOL_DENOM.to_string(),
+            2,
+            redeemer_addr,
+            Some("redemption-ref".to_string()),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            err,
+            ContractError::RestrictedMarkerHolderBurnNotSupported
+        ));
+        assert!(PENDING_REDEMPTIONS
+            .may_load(&ctx.deps.storage, 0)
+            .unwrap()
+            .is_none());
+        assert!(REDEMPTION_REFERENCES
+            .may_load(&ctx.deps.storage, "redemption-ref".to_string())
+            .unwrap()
+            .is_none());
     }
 
     #[test]
